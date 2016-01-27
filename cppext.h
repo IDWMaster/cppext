@@ -16,7 +16,9 @@ namespace System {
      * */
     virtual void Process() = 0;
   };
-  
+  class NullEvent:public Event {
+    void Process(){};
+  };
   /**
    * @summary A raw callback function
    * */
@@ -58,7 +60,12 @@ namespace System {
     return std::make_shared<CallbackFunction<F>>(functor);
   }
   template<typename F, typename L>
-  static std::shared_ptr<AbstractTimer> SetTimeout(const F& functor, uint64_t milliseconds, std::shared_ptr<L> loop) {    
+  static std::shared_ptr<AbstractTimer> SetTimeout(const F& functor, uint64_t milliseconds, std::shared_ptr<L> loop) {  
+    //TODO: Implement timeouts using chrono::ateady_clock
+    
+    //Compute desired time to completion by using steady_clock::now()+milliseconds
+    
+    
     std::shared_ptr<AbstractTimer> retval = std::make_shared<Timer<F,L>>(functor,loop);
     loop->Push(retval);
     return retval;
@@ -75,13 +82,22 @@ namespace System {
     std::mutex pendingEvents_mutex; //Mutex protecting pendingEvents
     std::condition_variable evt;
     std::queue<std::shared_ptr<Event>> pendingEvents; //Pending events for this loop
-    
+    std::map<uint64_t,std::vector<std::shared_ptr<AbstractTimer>>> timers;
     EventLoop() {
       running = false;
       
     }
     void Push(const std::shared_ptr<AbstractTimer>& timer) {
       //TODO: Register timer
+      uint64_t timeout = timer->timeout;
+      std::unique_lock<std::mutex> l(pendingEvents_mutex);
+      if(timers.find(timeout) == timers.end()) {
+	std::vector<std::shared_ptr<AbstractTimer>> vect;
+	timers[timeout] = vect;
+      }
+      timers[timeout].push_back(timer);
+      l.unlock();
+      Push(std::make_shared<NullEvent>()); //Force update to timers
       
     }
     void Push(const std::shared_ptr<Event>& evt) {
