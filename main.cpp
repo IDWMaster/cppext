@@ -3,16 +3,25 @@
 int main(int argc, char** argv) {
   std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
   std::thread lthread([&](){
-    loop->Enter();
+    //loop->Enter();
   });
-  loop->Push(System::MakeCallbackFunction([&](){
-    printf("Hello world from the event loop!\n");
-    loop->Exit();
-  }));
+lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff breaks.  
   
+  System::SetTimeout([&](){
+    printf("1 second elapsed\n");
+  },1000,loop);
+  size_t count = 4;
+  std::shared_ptr<System::AbstractTimer> ival;
+  ival = System::SetInterval([&](){
+    printf("200 milliseconds elapsed\n");
+    count--;
+    if(count == 0) {
+      ival->Cancel();
+    }
+  },200,loop);
+  loop->Enter();
   
-  
-lthread.join();
+
 return 0;
 }
  

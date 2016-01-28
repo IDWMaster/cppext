@@ -5,6 +5,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <map>
+#include <atomic>
 namespace System {
   
   
@@ -36,7 +37,7 @@ namespace System {
   
   class AbstractTimer:public Event {
   public:
-    uint64_t timeout;
+    std::chrono::steady_clock::time_point timeout;
     virtual void Cancel() = 0; //Cancels this timer
     virtual ~AbstractTimer(){};
   };
@@ -46,11 +47,34 @@ namespace System {
   public:
     F function;
     std::shared_ptr<L> loop;
-    Timer(const F& functor,uint64_t tint,const std::shared_ptr<L>& _loop):function(functor),loop(_loop) {
+    bool interval;
+    uint64_t ival; //interval value
+    bool enabled;
+    Timer(const F& functor,std::chrono::steady_clock::time_point tint,const std::shared_ptr<L>& _loop):function(functor),loop(_loop) {
       timeout = tint;
+      loop->AddRef();
+      interval = false;
+      enabled = true;
+    }
+    
+    void Cancel() {
+      enabled = false;
+      loop->RemoveRef();
     }
     void Process() {
-      function();
+	loop->_internal_reregister_timer = false;
+      if(enabled) {
+	function();
+	if(interval && enabled) {
+	  timeout = std::chrono::steady_clock::now()+std::chrono::milliseconds(ival);
+	  loop->_internal_reregister_timer = true;
+	}
+      }
+    }
+    ~Timer() {
+      if(enabled) {
+	loop->RemoveRef();
+      }
     }
   };
   
@@ -65,9 +89,20 @@ namespace System {
     
     //Compute desired time to completion by using steady_clock::now()+milliseconds
     
-    
-    std::shared_ptr<AbstractTimer> retval = std::make_shared<Timer<F,L>>(functor,loop);
+    std::shared_ptr<AbstractTimer> retval = std::make_shared<Timer<F,L>>(functor,std::chrono::steady_clock::now()+std::chrono::milliseconds(milliseconds),loop);
     loop->Push(retval);
+    return retval;
+  }
+  template<typename F, typename L>
+  static std::shared_ptr<AbstractTimer> SetInterval(const F& functor, uint64_t milliseconds, std::shared_ptr<L> loop) {  
+    //TODO: Implement timeouts using chrono::ateady_clock
+    
+    //Compute desired time to completion by using steady_clock::now()+milliseconds
+    
+    std::shared_ptr<Timer<F,L>> retval = std::make_shared<Timer<F,L>>(functor,std::chrono::steady_clock::now()+std::chrono::milliseconds(milliseconds),loop);
+    retval->interval = true;
+    retval->ival = milliseconds;
+    loop->Push(std::shared_ptr<AbstractTimer>(retval));
     return retval;
   }
   
@@ -82,14 +117,26 @@ namespace System {
     std::mutex pendingEvents_mutex; //Mutex protecting pendingEvents
     std::condition_variable evt;
     std::queue<std::shared_ptr<Event>> pendingEvents; //Pending events for this loop
-    std::map<uint64_t,std::vector<std::shared_ptr<AbstractTimer>>> timers;
+    std::map<std::chrono::steady_clock::time_point,std::vector<std::shared_ptr<AbstractTimer>>> timers;
     EventLoop() {
       running = false;
-      
+      refcount = 0;
     }
+    std::atomic<size_t> refcount;
+    void AddRef() {
+      
+      refcount++;
+    }
+    void RemoveRef() {
+      refcount--;
+    }
+    
+    bool _internal_reregister_timer;
+    
+    
     void Push(const std::shared_ptr<AbstractTimer>& timer) {
       //TODO: Register timer
-      uint64_t timeout = timer->timeout;
+      std::chrono::steady_clock::time_point timeout = timer->timeout;
       std::unique_lock<std::mutex> l(pendingEvents_mutex);
       if(timers.find(timeout) == timers.end()) {
 	std::vector<std::shared_ptr<AbstractTimer>> vect;
@@ -100,6 +147,9 @@ namespace System {
       Push(std::make_shared<NullEvent>()); //Force update to timers
       
     }
+    
+    
+    
     void Push(const std::shared_ptr<Event>& evt) {
       std::unique_lock<std::mutex> l(pendingEvents_mutex);
       pendingEvents.push(evt);
@@ -118,7 +168,7 @@ namespace System {
      * */
     void Enter() {
       running = true;
-      while(running) {
+      while(running && refcount) {
 	std::mutex mtx;
 	std::unique_lock<std::mutex> l(pendingEvents_mutex);
 	while(pendingEvents.size()) {
@@ -126,8 +176,41 @@ namespace System {
 	  pendingEvents.pop();
 	  evt->Process();
 	}
-	if(running) {
-	  this->evt.wait(l);
+	if(running && refcount) {
+	  //Check for timers
+	  if(timers.size()) {
+	    //get timer
+	    
+	    std::chrono::steady_clock::time_point point = timers.begin()->first;
+	    std::vector<std::shared_ptr<AbstractTimer>> ctimers = timers.begin()->second;
+	    //Invoke all timers
+	    auto invoke = [&](){
+	      std::shared_ptr<AbstractTimer>* ctimers_raw = ctimers.data();
+	      size_t len = ctimers.size();
+	      for(size_t i = 0;i<len;i++) {
+		_internal_reregister_timer = false;
+		ctimers_raw[i]->Process();
+		if(_internal_reregister_timer) {
+		  Push(ctimers_raw[i]);
+		}
+	      }
+	      timers.erase(point);
+	      
+	    };
+	    if(std::chrono::steady_clock::now()>=point) {
+	      //Invoke immediately
+	      l.unlock();
+	      invoke();
+	    }else {
+	      if(this->evt.wait_for(l,point-std::chrono::steady_clock::now()) == std::cv_status::timeout) {
+		l.unlock();
+		invoke();
+	      }
+	      
+	    }
+	  }else {
+	    this->evt.wait(l);
+	  }
 	}
       }
     }
