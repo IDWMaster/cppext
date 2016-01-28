@@ -6,6 +6,7 @@ int main(int argc, char** argv) {
     //loop->Enter();
   });
 lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff breaks.  
+
   
   System::SetTimeout([&](){
     printf("1 second elapsed\n");
