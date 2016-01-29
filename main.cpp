@@ -2,11 +2,14 @@
 #include <thread>
 int main(int argc, char** argv) {
   std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
+  std::shared_ptr<System::IO::IOLoop> ioloop = std::make_shared<System::IO::IOLoop>();
   std::thread lthread([&](){
     //loop->Enter();
   });
 lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff breaks.  
 
+//TODO: Async IO with pselect on dedicated I/O thread
+//http://linux.die.net/man/2/select
   
   System::SetTimeout([&](){
     printf("1 second elapsed\n");
@@ -22,7 +25,6 @@ lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff 
   },200,loop);
   loop->Enter();
   
-
 return 0;
 }
  

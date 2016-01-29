@@ -6,6 +6,8 @@
 #include <condition_variable>
 #include <map>
 #include <atomic>
+#include <thread>
+#include <unistd.h>
 namespace System {
   
   
@@ -217,7 +219,92 @@ namespace System {
   };
   
   
-  
+  namespace IO {
+    class IOReadyCallback {
+    public:
+      std::shared_ptr<System::EventLoop> loop;
+      std::shared_ptr<System::Event> event;
+      IOReadyCallback(const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
+	this->loop = loop;
+	this->event = event;
+      }
+      
+    };
+    /**
+     * Represents a backround I/O thread
+     * */
+    class IOLoop {
+    public:
+      std::thread* thread;
+      bool running;
+      int ntfyfd;
+      std::map<int,std::shared_ptr<IOReadyCallback>> callbacks;
+      std::mutex mtx;
+      IOLoop() {
+	int pfds[2]; //read,write ends
+	pipe(pfds);
+	ntfyfd = pfds[1];
+	running = true;
+	thread = new std::thread([=](){
+	  
+	  while(running) {
+	    
+	  int fdmaxplus1 = 0;
+	  fd_set fds;
+	  FD_ZERO(&fds);
+	  
+	  int fd = pfds[0]; //Notification fd
+	  fdmaxplus1 = fd+1;
+	  FD_SET(fd,&fds);
+	  {
+	    std::unique_lock<std::mutex> l(mtx);
+	    for(auto i = callbacks.begin();i!= callbacks.end();i++) {
+	      if((i->first)+1>fdmaxplus1) {
+		fdmaxplus1 = i->first+1;
+	      }
+	      FD_SET(i->first,&fds);
+	    }
+	  }
+	  struct timeval tv;
+	  FD_SET(fd,&fds);
+	    tv.tv_sec = -1;
+	    if(select(fdmaxplus1,&fds,0,0,&tv) != -1) {
+	      {
+		if(FD_ISSET(fd,&fds)) {
+		  unsigned char izard;
+		  read(fd,&izard,1);
+		}
+		std::unique_lock<std::mutex> l(mtx);
+		for(auto i = callbacks.begin();i!= callbacks.end();i++) {
+		  if(FD_ISSET(i->first,&fds)) {
+		    //Post to event queue
+		    i->second->loop->Push(i->second->event);
+		  }
+		}
+	      }
+	    }
+	    
+	  }
+	});
+      }
+      void Ntfy() {
+	unsigned char mander;
+	write(ntfyfd,&mander,1);
+      }
+      void AddFd(int fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
+	    std::unique_lock<std::mutex> l(mtx);
+	    std::shared_ptr<IOReadyCallback> cb = std::make_shared<IOReadyCallback>(loop,event);
+	    callbacks[fd] = cb;
+	    Ntfy();
+      }
+      ~IOLoop() {
+	running = false;
+	Ntfy();
+	thread->join();
+	
+      }
+    };
+  }
 }
 
 #endif
