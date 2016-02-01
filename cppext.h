@@ -8,6 +8,9 @@
 #include <atomic>
 #include <thread>
 #include <unistd.h>
+#include <aio.h>
+#include <string.h>
+#include <signal.h>
 namespace System {
   
   
@@ -230,6 +233,7 @@ namespace System {
       }
       
     };
+    
     /**
      * Represents a backround I/O thread
      * */
@@ -238,52 +242,47 @@ namespace System {
       std::thread* thread;
       bool running;
       int ntfyfd;
-      std::map<int,std::shared_ptr<IOReadyCallback>> callbacks;
+      std::map<struct aiocb*,std::shared_ptr<IOReadyCallback>> callbacks;
       std::mutex mtx;
       IOLoop() {
 	int pfds[2]; //read,write ends
 	pipe(pfds);
 	ntfyfd = pfds[1];
 	running = true;
+	int fd = pfds[0];
 	thread = new std::thread([=](){
 	  
 	  while(running) {
-	    
-	  int fdmaxplus1 = 0;
-	  fd_set fds;
-	  FD_ZERO(&fds);
-	  
-	  int fd = pfds[0]; //Notification fd
-	  fdmaxplus1 = fd+1;
-	  FD_SET(fd,&fds);
-	  {
-	    std::unique_lock<std::mutex> l(mtx);
-	    for(auto i = callbacks.begin();i!= callbacks.end();i++) {
-	      if((i->first)+1>fdmaxplus1) {
-		fdmaxplus1 = i->first+1;
+	    struct aiocb** cblist;
+	    size_t csz;
+	    {
+	      std::unique_lock<std::mutex> l(mtx);
+	      
+	      csz = callbacks.size()+1;
+	      cblist = new struct aiocb*[csz];
+	      cblist[0] = new struct aiocb();
+	      memset(cblist[0],0,sizeof(cblist[0]));
+	      unsigned char mander;
+	      cblist[0]->aio_buf = &mander;
+	      cblist[0]->aio_nbytes = 1;
+	      cblist[0]->aio_fildes = fd;
+	      aio_read(cblist[0]);
+	      timespec timeout;
+	      timeout.tv_sec = -1;
+	      size_t cpos = 1;
+	      for(auto i = callbacks.begin();i!= callbacks.end();i++) {
+		cblist[cpos] = i->first;
+		cpos++;
 	      }
-	      FD_SET(i->first,&fds);
 	    }
-	  }
-	  struct timeval tv;
-	  FD_SET(fd,&fds);
-	    tv.tv_sec = -1;
-	    if(select(fdmaxplus1,&fds,0,0,&tv) != -1) {
-	      {
-		if(FD_ISSET(fd,&fds)) {
-		  unsigned char izard;
-		  read(fd,&izard,1);
-		}
-		std::unique_lock<std::mutex> l(mtx);
-		for(auto i = callbacks.begin();i!= callbacks.end();i++) {
-		  if(FD_ISSET(i->first,&fds)) {
-		    //Post to event queue
-		    i->second->loop->Push(i->second->event);
-		  }
-		}
+	    aio_suspend(cblist,csz,0);
+	    for(size_t i = 0;i<csz;i++) {
+	      if(aio_error(cblist[i]) == EINPROGRESS) {
+		
 	      }
 	    }
 	    
+	      delete[] cblist;
 	  }
 	});
       }
@@ -291,7 +290,7 @@ namespace System {
 	unsigned char mander;
 	write(ntfyfd,&mander,1);
       }
-      void AddFd(int fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
+      void AddFd(struct aiocb* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
 	    std::unique_lock<std::mutex> l(mtx);
 	    std::shared_ptr<IOReadyCallback> cb = std::make_shared<IOReadyCallback>(loop,event);
 	    callbacks[fd] = cb;
@@ -304,6 +303,107 @@ namespace System {
 	
       }
     };
+    class IOCallback:public System::Event {
+    public:
+      size_t outlen; //Output length (number of bytes processed)
+      bool error; //Whether or not error occured.
+      IOCallback() {
+	outlen = 0;
+	error = false;
+      }
+      virtual void Process() = 0;
+    };
+    template<typename T>
+    class IOCallbackFunction:public IOCallback {
+    public:
+      T functor;
+    IOCallbackFunction(const T& func):functor(func) {
+      
+      };
+      void Process() {
+	functor(*this);
+      }
+    };
+    template<typename T>
+    static std::shared_ptr<IOCallback> IOCB(const T& functor) {
+      return std::make_shared<IOCallbackFunction<T>>(functor);
+    }
+    
+    /**
+     * A stream for performing file I/O
+     * */
+    class Stream {
+    public:
+      /**
+       * @summary Asynchronously reads from a stream
+       * @param buffer The buffer to store the data in
+       * @param len The size of the buffer (max amount of data to be read)
+       * @param callback The callback function to invoke when the operation completes
+       * */
+      virtual void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
+      /**
+       * @summary Adds a new buffer into the ordered write queue for this stream
+       * @param buffer The buffer to write to the stream
+       * @param len The length of the buffer to write
+       * @param callback A callback to invoke when the write operation completes
+       * */
+      virtual void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
+      virtual void Pipe(const std::shared_ptr<Stream>& output, size_t bufflen = 4096){
+	int pfds[2];
+	pipe(pfds);
+	unsigned char* buffer = new unsigned char[bufflen];
+	std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
+	*cb = IOCB([&](const IOCallback& info){
+	  if(info.outlen == 0) {
+	    //End of stream, close pipe
+	    delete[] buffer;
+	    delete cb;
+	  }else {
+	    Write(buffer,info.outlen,IOCB([=](const IOCallback& info){
+		Read(buffer,bufflen,*cb);
+	    }));
+	  }
+	});
+      }
+    };
+    /**
+     * Represents a Stream corresponding to a file descriptor
+     * */
+    class FileStream:public Stream {
+    public:
+      std::shared_ptr<IOLoop> iol;
+      std::shared_ptr<System::EventLoop> evl;
+      int fd;
+      uint64_t offset;
+      /**
+       * @summary Creates a new FileStream
+       * @param fd The file descriptor -- must be opened in non-blocking mode.
+       * */
+      FileStream(int fd,  const std::shared_ptr<IOLoop>& loop, const std::shared_ptr<System::EventLoop>& evloop) {
+	iol = loop;
+	this->fd = fd;
+	this->offset = 0;
+	evl = evloop;
+	
+      }
+      void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
+	struct aiocb req;
+	memset(&req,0,sizeof(req));
+	req.aio_buf = (void*)buffer;
+	req.aio_fildes = fd;
+	req.aio_nbytes = len;
+	req.aio_offset = offset;
+	
+	//iol->AddFd(fd,evl,callback);
+	//TODO: To pause a thread until a number of AIO operations complete; use aio_suspend
+	
+	aio_write(&req);
+      }
+      void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
+	
+      }
+    };
+    
   }
 }
 

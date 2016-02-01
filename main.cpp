@@ -1,5 +1,8 @@
 #include "cppext.h"
 #include <thread>
+#include <fcntl.h>
+
+
 int main(int argc, char** argv) {
   std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
   std::shared_ptr<System::IO::IOLoop> ioloop = std::make_shared<System::IO::IOLoop>();
@@ -23,6 +26,19 @@ lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff 
       ival->Cancel();
     }
   },200,loop);
+  
+  loop->AddRef(); //Increment reference count to perform async I/O
+  int testfd = open("testfile",O_RDWR | O_CREAT,S_IRUSR | S_IWUSR);
+  const char* buffy = "Hi world!";
+  
+  
+  std::shared_ptr<System::IO::FileStream> str = std::make_shared<System::IO::FileStream>(testfd,ioloop,loop);
+  str->Write(buffy,strlen(buffy),System::IO::IOCB([&](const System::IO::IOCallback& cb){
+    printf("AIO completed\n");
+  }));
+  //printf("Sent write request\n");
+  
+  
   loop->Enter();
   
 return 0;
