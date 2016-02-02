@@ -386,7 +386,7 @@ namespace System {
     /**
      * Represents a Stream corresponding to a file descriptor
      * */
-    class FileStream:public Stream {
+    class FileStream:public Stream, public std::enable_shared_from_this<FileStream> {
     public:
       std::shared_ptr<IOLoop> iol;
       std::shared_ptr<System::EventLoop> evl;
@@ -410,10 +410,10 @@ namespace System {
 	req->aio_fildes = fd;
 	req->aio_nbytes = len;
 	req->aio_offset = offset;
-	
+	std::shared_ptr<FileStream> thisptr = shared_from_this();
 	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
 	  if(!cb.error) {
-	    this->offset+=cb.outlen;
+	    thisptr->offset+=cb.outlen;
 	  }
 	  callback->error = cb.error;
 	  callback->outlen = cb.outlen;
@@ -430,9 +430,10 @@ namespace System {
 	req->aio_nbytes = len;
 	req->aio_offset = offset;
 	
+	std::shared_ptr<FileStream> thisptr = shared_from_this();
 	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
 	  if(!cb.error) {
-	    this->offset+=cb.outlen;
+	    thisptr->offset+=cb.outlen;
 	  }
 	  callback->error = cb.error;
 	  callback->outlen = cb.outlen;
