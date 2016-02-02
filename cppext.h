@@ -25,6 +25,20 @@ namespace System {
   class NullEvent:public Event {
     void Process(){};
   };
+  namespace IO {
+    class IOCallback:public System::Event {
+    public:
+      size_t outlen; //Output length (number of bytes processed)
+      bool error; //Whether or not error occured.
+      IOCallback() {
+	outlen = 0;
+	error = false;
+      }
+      virtual void Process() = 0;
+    };
+  }
+  
+  
   /**
    * @summary A raw callback function
    * */
@@ -226,8 +240,8 @@ namespace System {
     class IOReadyCallback {
     public:
       std::shared_ptr<System::EventLoop> loop;
-      std::shared_ptr<System::Event> event;
-      IOReadyCallback(const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
+      std::shared_ptr<System::IO::IOCallback> event;
+      IOReadyCallback(const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
 	this->loop = loop;
 	this->event = event;
       }
@@ -282,6 +296,12 @@ namespace System {
 		std::unique_lock<std::mutex> l(mtx); //It's a VERY unique lock!
 		std::shared_ptr<IOReadyCallback> cb = callbacks[cblist[i]];
 		callbacks.erase(cblist[i]);
+		ssize_t rval = aio_return(cblist[i]);
+		if(rval == -1) {
+		  cb->event->error = true;
+		}else {
+		  cb->event->outlen = (size_t)rval;
+		}
 		delete cblist[i];
 		cb->loop->Push(cb->event);
 		
@@ -296,7 +316,7 @@ namespace System {
 	unsigned char mander;
 	write(ntfyfd,&mander,1);
       }
-      void AddFd(struct aiocb* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
+      void AddFd(struct aiocb* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
 	    std::unique_lock<std::mutex> l(mtx);
 	    std::shared_ptr<IOReadyCallback> cb = std::make_shared<IOReadyCallback>(loop,event);
 	    callbacks[fd] = cb;
@@ -309,16 +329,7 @@ namespace System {
 	
       }
     };
-    class IOCallback:public System::Event {
-    public:
-      size_t outlen; //Output length (number of bytes processed)
-      bool error; //Whether or not error occured.
-      IOCallback() {
-	outlen = 0;
-	error = false;
-      }
-      virtual void Process() = 0;
-    };
+    
     template<typename T>
     class IOCallbackFunction:public IOCallback {
     public:

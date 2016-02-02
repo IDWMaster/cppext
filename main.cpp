@@ -34,7 +34,7 @@ lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff 
   
   std::shared_ptr<System::IO::FileStream> str = std::make_shared<System::IO::FileStream>(testfd,ioloop,loop);
   str->Write(buffy,strlen(buffy),System::IO::IOCB([&](const System::IO::IOCallback& cb){
-    printf("AIO completed\n");
+    printf("AIO completed, error = %i, written = %i\n",(int)cb.error,(int)cb.outlen);
   }));
   //printf("Sent write request\n");
   
