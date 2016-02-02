@@ -276,8 +276,14 @@ namespace System {
 	      }
 	    }
 	    aio_suspend(cblist,csz,0);
-	    for(size_t i = 0;i<csz;i++) {
-	      if(aio_error(cblist[i]) == EINPROGRESS) {
+	    for(size_t i = 1;i<csz;i++) {
+	      if(aio_error(cblist[i]) != EINPROGRESS) {
+		//IO completion
+		std::unique_lock<std::mutex> l(mtx); //It's a VERY unique lock!
+		std::shared_ptr<IOReadyCallback> cb = callbacks[cblist[i]];
+		callbacks.erase(cblist[i]);
+		delete cblist[i];
+		cb->loop->Push(cb->event);
 		
 	      }
 	    }
@@ -387,17 +393,17 @@ namespace System {
 	
       }
       void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
-	struct aiocb req;
-	memset(&req,0,sizeof(req));
-	req.aio_buf = (void*)buffer;
-	req.aio_fildes = fd;
-	req.aio_nbytes = len;
-	req.aio_offset = offset;
+	struct aiocb* req = new struct aiocb();
+	memset(req,0,sizeof(*req));
+	req->aio_buf = (void*)buffer;
+	req->aio_fildes = fd;
+	req->aio_nbytes = len;
+	req->aio_offset = offset;
 	
-	//iol->AddFd(fd,evl,callback);
+	iol->AddFd(req,evl,callback);
 	//TODO: To pause a thread until a number of AIO operations complete; use aio_suspend
 	
-	aio_write(&req);
+	aio_write(req);
       }
       void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
 	
