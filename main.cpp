@@ -36,6 +36,11 @@ lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff 
   str->Write(buffy,strlen(buffy),System::IO::IOCB([&](const System::IO::IOCallback& cb){
     printf("AIO completed, error = %i, written = %i\n",(int)cb.error,(int)cb.outlen);
   }));
+  char mander[1024];
+  memset(mander,0,1024);
+  str->Read(mander,1024,System::IO::IOCB([&](const System::IO::IOCallback& cb){
+    printf("Read %i bytes\n%s\n",(int)cb.outlen,mander);
+  }));
   //printf("Sent write request\n");
   
   
