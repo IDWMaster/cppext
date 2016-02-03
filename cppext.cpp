@@ -368,9 +368,6 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
     Runtime() {
       
       loop = std::make_shared<EventLoop>();
-      if(!giol) {
-	giol = std::make_shared<IO::IOLoop>();
-      }
       iol = giol;
       
     }
@@ -383,6 +380,7 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
   public:
     Initializer() {
     
+	giol = std::make_shared<IO::IOLoop>();
       std::thread mtr([=](){}); //Fix for pthreads issue
       mtr.join();
       
