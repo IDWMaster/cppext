@@ -20,18 +20,6 @@ namespace System {
   
   
   
-  namespace IO {
-    class IOCallback:public System::Event {
-    public:
-      size_t outlen; //Output length (number of bytes processed)
-      bool error; //Whether or not error occured.
-      IOCallback() {
-	outlen = 0;
-	error = false;
-      }
-      virtual void Process() = 0;
-    };
-  }
   
   
   
@@ -282,59 +270,9 @@ namespace System {
       }
     };
     
-    template<typename T>
-    class IOCallbackFunction:public IOCallback {
-    public:
-      T functor;
-    IOCallbackFunction(const T& func):functor(func) {
-      
-      };
-      void Process() {
-	functor(*this);
-      }
-    };
-    template<typename T>
-    static std::shared_ptr<IOCallback> IOCB(const T& functor) {
-      return std::make_shared<IOCallbackFunction<T>>(functor);
-    }
     
-    /**
-     * A stream for performing file I/O
-     * */
-    class Stream {
-    public:
-      /**
-       * @summary Asynchronously reads from a stream
-       * @param buffer The buffer to store the data in
-       * @param len The size of the buffer (max amount of data to be read)
-       * @param callback The callback function to invoke when the operation completes
-       * */
-      virtual void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
-      /**
-       * @summary Adds a new buffer into the ordered write queue for this stream
-       * @param buffer The buffer to write to the stream
-       * @param len The length of the buffer to write
-       * @param callback A callback to invoke when the write operation completes
-       * */
-      virtual void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
-      virtual void Pipe(const std::shared_ptr<Stream>& output, size_t bufflen = 4096){
-	int pfds[2];
-	pipe(pfds);
-	unsigned char* buffer = new unsigned char[bufflen];
-	std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
-	*cb = IOCB([&](const IOCallback& info){
-	  if(info.outlen == 0) {
-	    //End of stream, close pipe
-	    delete[] buffer;
-	    delete cb;
-	  }else {
-	    Write(buffer,info.outlen,IOCB([=](const IOCallback& info){
-		Read(buffer,bufflen,*cb);
-	    }));
-	  }
-	});
-      }
-    };
+    
+    
     /**
      * Represents a Stream corresponding to a file descriptor
      * */
@@ -395,16 +333,40 @@ namespace System {
       }
     };
     
+
+void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
+{
+  int pfds[2];
+	pipe(pfds);
+	unsigned char* buffer = new unsigned char[bufflen];
+	std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
+	*cb = IOCB([&](const IOCallback& info){
+	  if(info.outlen == 0) {
+	    //End of stream, close pipe
+	    delete[] buffer;
+	    delete cb;
+	  }else {
+	    Write(buffer,info.outlen,IOCB([=](const IOCallback& info){
+		Read(buffer,bufflen,*cb);
+	    }));
+	  }
+	});
+}
+
   }
   
   
   class Runtime {
   public:
     std::shared_ptr<EventLoop> loop;
+    std::shared_ptr<IO::IOLoop> iol;
     Runtime() {
+      
       loop = std::make_shared<EventLoop>();
+      iol = std::make_shared<IO::IOLoop>();
       std::thread mtr([=](){}); //Fix for pthreads issue
       mtr.join();
+      
     }
     ~Runtime() {
       
@@ -412,7 +374,14 @@ namespace System {
   };
   static Runtime runtime;
   
-  
+
+std::shared_ptr< IO::Stream > IO::FD2S(int fd)
+{
+
+  return std::make_shared<FileStream>(fd,runtime.iol,runtime.loop);
+}
+
+ 
    
 std::shared_ptr<AbstractTimer> System::Internal::SetTimeout(const std::shared_ptr< Event >& event, size_t duration)
 {

@@ -2,7 +2,7 @@
 #include <thread>
 #include <fcntl.h>
 #include <stdio.h>
-
+#include <string.h>
 int main(int argc, char** argv) {
  /* std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
   std::shared_ptr<System::IO::IOLoop> ioloop = std::make_shared<System::IO::IOLoop>();
@@ -26,13 +26,12 @@ int main(int argc, char** argv) {
       ival->Cancel();
     }
   },200);
-  /*
-  loop->AddRef(); //Increment reference count to perform async I/O
+  
   int testfd = open("testfile",O_RDWR | O_CREAT,S_IRUSR | S_IWUSR);
   const char* buffy = "Hi world!";
   
   
-  std::shared_ptr<System::IO::FileStream> str = std::make_shared<System::IO::FileStream>(testfd,ioloop,loop);
+  std::shared_ptr<System::IO::Stream> str = System::IO::FD2S(testfd);
   str->Write(buffy,strlen(buffy),System::IO::IOCB([&](const System::IO::IOCallback& cb){
     printf("AIO completed, error = %i, written = %i\n",(int)cb.error,(int)cb.outlen);
   }));
@@ -44,7 +43,6 @@ int main(int argc, char** argv) {
   //printf("Sent write request\n");
   
   
-  loop->Enter();*/
   
   //Enter this thread into an event loop
   System::Enter();

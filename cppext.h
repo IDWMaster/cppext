@@ -68,6 +68,62 @@ namespace System {
      * Enters the calling thread into an event loop.
      * */
     void Enter();
+    
+    namespace IO {
+      class IOCallback:public System::Event {
+    public:
+      size_t outlen; //Output length (number of bytes processed)
+      bool error; //Whether or not error occured.
+      IOCallback() {
+	outlen = 0;
+	error = false;
+      }
+      virtual void Process() = 0;
+    };
+      template<typename T>
+    class IOCallbackFunction:public IOCallback {
+    public:
+      T functor;
+    IOCallbackFunction(const T& func):functor(func) {
+      
+      };
+      void Process() {
+	functor(*this);
+      }
+    };
+    template<typename T>
+    static std::shared_ptr<IOCallback> IOCB(const T& functor) {
+      return std::make_shared<IOCallbackFunction<T>>(functor);
+    }
+      /**
+     * A stream for performing file I/O
+     * */
+    class Stream {
+    public:
+      /**
+       * @summary Asynchronously reads from a stream
+       * @param buffer The buffer to store the data in
+       * @param len The size of the buffer (max amount of data to be read)
+       * @param callback The callback function to invoke when the operation completes
+       * */
+      virtual void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
+      /**
+       * @summary Adds a new buffer into the ordered write queue for this stream
+       * @param buffer The buffer to write to the stream
+       * @param len The length of the buffer to write
+       * @param callback A callback to invoke when the write operation completes
+       * */
+      virtual void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
+      virtual void Pipe(const std::shared_ptr<Stream>& output, size_t bufflen = 4096);
+    };
+    /**
+     * @summary Converts a platform-specific file descriptor to a Stream
+     * */
+    std::shared_ptr<Stream> FD2S(int fd);
+    
+    
+    
+    }
 }
 
 #endif
