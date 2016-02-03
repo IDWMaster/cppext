@@ -23,16 +23,20 @@ int main(int argc, char** argv) {
 
   const char* buffy = "Hi world!";
   
-  
+  char mander[1024];
+  memset(mander, 0, 1024);
   std::shared_ptr<System::IO::Stream> str = System::IO::FD2S(testfd);
   str->Write(buffy,strlen(buffy),System::IO::IOCB([&](const System::IO::IOCallback& cb){
     printf("AIO completed, error = %i, written = %i\n",(int)cb.error,(int)cb.outlen);
+	std::shared_ptr<System::IO::Stream> readstr = System::IO::FD2S(testfd);
+	
+
+	readstr->Read(mander, 1024, System::IO::IOCB([&](const System::IO::IOCallback& cb) {
+		printf("Read %i bytes\n%s\n", (int)cb.outlen, mander);
+	}));
+
   }));
-  char mander[1024];
-  memset(mander,0,1024);
-  str->Read(mander,1024,System::IO::IOCB([&](const System::IO::IOCallback& cb){
-    printf("Read %i bytes\n%s\n",(int)cb.outlen,mander);
-  }));
+  
   
   
   

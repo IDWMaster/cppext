@@ -218,14 +218,14 @@ namespace System {
 	RpcStringFreeW(&str);
 	std::wstring fullname = pipename.str();
 	//Create write end of pipe
-	pipe = CreateNamedPipeW(fullname.data(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE, 2, 1, 1, 0, 0);
+	pipe = CreateNamedPipeW(fullname.data(), PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED, PIPE_TYPE_BYTE, 2, 1, 1, 0, 0);
 
 
 	ntfyfd = pipe;
 	running = true;
 	HANDLE fd = CreateFileW(fullname.data(), GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
 	thread = new std::thread([=](){
-	  
+		AsyncIOOperation* current = 0;
 	  while(running) {
 	    AsyncIOOperation** cblist;
 	    size_t csz;
@@ -234,14 +234,18 @@ namespace System {
 	      
 	      csz = callbacks.size()+1;
 	      cblist = new AsyncIOOperation*[csz];
-	      cblist[0] = new AsyncIOOperation();
-		  cblist[0]->overlapped = new OVERLAPPED();
-		  memset(cblist[0]->overlapped, 0, sizeof(OVERLAPPED));
-		  cblist[0]->overlapped->hEvent = CreateEventW(0, true, false, 0);
-	      unsigned char mander;
-		  ReadFile(fd, &mander, 1, 0, cblist[0]->overlapped);
-		  timespec timeout;
-	      timeout.tv_sec = -1;
+		  if (current == 0) {
+			  cblist[0] = new AsyncIOOperation();
+			  cblist[0]->overlapped = new OVERLAPPED();
+			  memset(cblist[0]->overlapped, 0, sizeof(OVERLAPPED));
+			  cblist[0]->overlapped->hEvent = CreateEventW(0, true, false, 0);
+			  unsigned char mander;
+			  ReadFile(fd, &mander, 1, 0, cblist[0]->overlapped);
+			  current = cblist[0];
+		  }
+		  else {
+			  cblist[0] = current;
+		  }
 	      size_t cpos = 1;
 	      for(auto i = callbacks.begin();i!= callbacks.end();i++) {
 		cblist[cpos] = i->first;
@@ -257,6 +261,7 @@ namespace System {
 		if (HasOverlappedIoCompleted(cblist[0]->overlapped)) {
 			DWORD transferred;
 			GetOverlappedResult(fd, cblist[0]->overlapped, &transferred, false);
+			current = 0;
 		}
 		for(size_t i = 1;i<csz;i++) {
 	      if(HasOverlappedIoCompleted(cblist[i]->overlapped)) {
@@ -285,9 +290,12 @@ namespace System {
 	});
       }
       void Ntfy() {
+		  OVERLAPPED overlapped;
+		  memset(&overlapped, 0, sizeof(overlapped));
 	unsigned char mander;
 	DWORD written;
-	WriteFile(ntfyfd, &mander, 1, &written, 0);
+	WriteFile(ntfyfd, &mander, 1, 0, &overlapped);
+	GetOverlappedResult(ntfyfd, &overlapped, &written, true);
       }
       void AddFd(AsyncIOOperation* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
 	    std::unique_lock<std::mutex> l(mtx);
