@@ -1,22 +1,22 @@
 #include "cppext.h"
 #include <thread>
 #include <fcntl.h>
-
+#include <stdio.h>
 
 int main(int argc, char** argv) {
-  std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
+ /* std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
   std::shared_ptr<System::IO::IOLoop> ioloop = std::make_shared<System::IO::IOLoop>();
   std::thread lthread([&](){
     //loop->Enter();
-  });
-lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff breaks.  
+  });*/
+//lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff breaks.  
 
 //TODO: Async IO with pselect on dedicated I/O thread
 //http://linux.die.net/man/2/select
   
   System::SetTimeout([&](){
     printf("1 second elapsed\n");
-  },1000,loop);
+  },1000);
   size_t count = 4;
   std::shared_ptr<System::AbstractTimer> ival;
   ival = System::SetInterval([&](){
@@ -25,8 +25,8 @@ lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff 
     if(count == 0) {
       ival->Cancel();
     }
-  },200,loop);
-  
+  },200);
+  /*
   loop->AddRef(); //Increment reference count to perform async I/O
   int testfd = open("testfile",O_RDWR | O_CREAT,S_IRUSR | S_IWUSR);
   const char* buffy = "Hi world!";
@@ -44,8 +44,10 @@ lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff 
   //printf("Sent write request\n");
   
   
-  loop->Enter();
+  loop->Enter();*/
   
+  //Enter this thread into an event loop
+  System::Enter();
 return 0;
 }
  

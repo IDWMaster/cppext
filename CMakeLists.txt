@@ -1,4 +1,4 @@
-add_executable(test main.cpp)
+add_executable(test cppext.cpp main.cpp)
 set (EXTRA_LIBS ${EXTRA_LIBS})
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I. -std=c++11 -g")
 include_directories(${EXTRA_HEADERS} "${PROJECT_BINARY_DIR}" ".")
