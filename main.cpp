@@ -31,7 +31,22 @@ int main(int argc, char** argv) {
   str->Read(mander,1024,System::IO::IOCB([&](const System::IO::IOCallback& cb){
     printf("Read %i bytes\n%s\n",(int)cb.outlen,mander);
   }));
+  
+  
+  
+  std::thread worker([&](){
+    //This is an example of a worker thread, having its own event loop.
+    System::SetTimeout([](){
+      printf("2 seconds elapsed, on worker thread\n");
+    },2000);
+    System::Enter();
+    printf("Worker thread exited\n");
+  });
+  
+  
   System::Enter();
+  printf("Main thread exited\n");
+  worker.join();
 return 0;
 }
  

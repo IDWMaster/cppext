@@ -184,6 +184,10 @@ namespace System {
       IOReadyCallback(const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
 	this->loop = loop;
 	this->event = event;
+	this->loop->AddRef();
+      }
+      ~IOReadyCallback() {
+	this->loop->RemoveRef();
       }
       
     };
@@ -355,25 +359,36 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
 
   }
   
+  static std::shared_ptr<IO::IOLoop> giol;
   
   class Runtime {
   public:
-    std::shared_ptr<EventLoop> loop;
+   std::shared_ptr<EventLoop> loop;
     std::shared_ptr<IO::IOLoop> iol;
     Runtime() {
       
       loop = std::make_shared<EventLoop>();
-      iol = std::make_shared<IO::IOLoop>();
-      std::thread mtr([=](){}); //Fix for pthreads issue
-      mtr.join();
+      if(!giol) {
+	giol = std::make_shared<IO::IOLoop>();
+      }
+      iol = giol;
       
     }
     ~Runtime() {
       
     }
   };
-  static Runtime runtime;
-  
+  thread_local Runtime runtime;
+  class Initializer {
+  public:
+    Initializer() {
+    
+      std::thread mtr([=](){}); //Fix for pthreads issue
+      mtr.join();
+      
+    }
+  };
+  static Initializer lib_init;
 
 std::shared_ptr< IO::Stream > IO::FD2S(int fd)
 {
