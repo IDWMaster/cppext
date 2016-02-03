@@ -6,11 +6,9 @@
 #include <map>
 #include <atomic>
 #include <thread>
-#include <unistd.h>
-#include <aio.h>
 #include <string.h>
 #include <signal.h>
-
+#include <sstream>
 namespace System {
   
   
@@ -191,7 +189,13 @@ namespace System {
       }
       
     };
-    
+	class AsyncIOOperation {
+	public:
+		LPOVERLAPPED overlapped;
+		HANDLE fd;
+		void* buffer;
+		size_t buffsz;
+	};
     /**
      * Represents a backround I/O thread
      * */
@@ -199,33 +203,44 @@ namespace System {
     public:
       std::thread* thread;
       bool running;
-      int ntfyfd;
-      std::map<struct aiocb*,std::shared_ptr<IOReadyCallback>> callbacks;
+      HANDLE ntfyfd;
+      std::map<AsyncIOOperation*,std::shared_ptr<IOReadyCallback>> callbacks;
       std::mutex mtx;
       IOLoop() {
-	int pfds[2]; //read,write ends
-	pipe(pfds);
-	ntfyfd = pfds[1];
+		  HANDLE pipe; 
+	std::wstringstream pipename;
+	pipename<<L"\\\\.\\pipe\\";
+	UUID pipeid;
+	UuidCreate(&pipeid);
+	RPC_WSTR str;
+	UuidToStringW(&pipeid, &str);
+	pipename<<str;
+	RpcStringFreeW(&str);
+	std::wstring fullname = pipename.str();
+	//Create write end of pipe
+	pipe = CreateNamedPipeW(fullname.data(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE, 2, 1, 1, 0, 0);
+
+
+	ntfyfd = pipe;
 	running = true;
-	int fd = pfds[0];
+	HANDLE fd = CreateFileW(fullname.data(), GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
 	thread = new std::thread([=](){
 	  
 	  while(running) {
-	    struct aiocb** cblist;
+	    AsyncIOOperation** cblist;
 	    size_t csz;
 	    {
 	      std::unique_lock<std::mutex> l(mtx);
 	      
 	      csz = callbacks.size()+1;
-	      cblist = new struct aiocb*[csz];
-	      cblist[0] = new struct aiocb();
-	      memset(cblist[0],0,sizeof(cblist[0]));
+	      cblist = new AsyncIOOperation*[csz];
+	      cblist[0] = new AsyncIOOperation();
+		  cblist[0]->overlapped = new OVERLAPPED();
+		  memset(cblist[0]->overlapped, 0, sizeof(OVERLAPPED));
+		  cblist[0]->overlapped->hEvent = CreateEventW(0, true, false, 0);
 	      unsigned char mander;
-	      cblist[0]->aio_buf = &mander;
-	      cblist[0]->aio_nbytes = 1;
-	      cblist[0]->aio_fildes = fd;
-	      aio_read(cblist[0]);
-	      timespec timeout;
+		  ReadFile(fd, &mander, 1, 0, cblist[0]->overlapped);
+		  timespec timeout;
 	      timeout.tv_sec = -1;
 	      size_t cpos = 1;
 	      for(auto i = callbacks.begin();i!= callbacks.end();i++) {
@@ -233,19 +248,32 @@ namespace System {
 		cpos++;
 	      }
 	    }
-	    aio_suspend(cblist,csz,0);
-	    for(size_t i = 1;i<csz;i++) {
-	      if(aio_error(cblist[i]) != EINPROGRESS) {
+		HANDLE* waithandles = new HANDLE[csz];
+		for (size_t i = 0; i < csz; i++) {
+			waithandles[i] = cblist[i]->overlapped->hEvent;
+		}
+		WaitForMultipleObjects(csz, waithandles, false, -1);
+		delete[] waithandles;
+		if (HasOverlappedIoCompleted(cblist[0]->overlapped)) {
+			DWORD transferred;
+			GetOverlappedResult(fd, cblist[0]->overlapped, &transferred, false);
+		}
+		for(size_t i = 1;i<csz;i++) {
+	      if(HasOverlappedIoCompleted(cblist[i]->overlapped)) {
 		//IO completion
 		std::unique_lock<std::mutex> l(mtx); //It's a VERY unique lock!
 		std::shared_ptr<IOReadyCallback> cb = callbacks[cblist[i]];
 		callbacks.erase(cblist[i]);
-		ssize_t rval = aio_return(cblist[i]);
-		if(rval == -1) {
+		DWORD transferred = 0;
+		bool s = GetOverlappedResult(cblist[i]->fd,cblist[i]->overlapped,&transferred,false);
+		
+		if(!s) {
 		  cb->event->error = true;
 		}else {
-		  cb->event->outlen = (size_t)rval;
+		  cb->event->outlen = (size_t)transferred;
 		}
+		CloseHandle(cblist[i]->overlapped->hEvent);
+		delete cblist[i]->overlapped;
 		delete cblist[i];
 		cb->loop->Push(cb->event);
 		
@@ -258,9 +286,10 @@ namespace System {
       }
       void Ntfy() {
 	unsigned char mander;
-	write(ntfyfd,&mander,1);
+	DWORD written;
+	WriteFile(ntfyfd, &mander, 1, &written, 0);
       }
-      void AddFd(struct aiocb* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
+      void AddFd(AsyncIOOperation* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
 	    std::unique_lock<std::mutex> l(mtx);
 	    std::shared_ptr<IOReadyCallback> cb = std::make_shared<IOReadyCallback>(loop,event);
 	    callbacks[fd] = cb;
@@ -284,13 +313,13 @@ namespace System {
     public:
       std::shared_ptr<IOLoop> iol;
       std::shared_ptr<System::EventLoop> evl;
-      int fd;
+      HANDLE fd;
       uint64_t offset;
       /**
        * @summary Creates a new FileStream
        * @param fd The file descriptor -- must be opened in non-blocking mode.
        * */
-      FileStream(int fd,  const std::shared_ptr<IOLoop>& loop, const std::shared_ptr<System::EventLoop>& evloop) {
+      FileStream(HANDLE fd,  const std::shared_ptr<IOLoop>& loop, const std::shared_ptr<System::EventLoop>& evloop) {
 	iol = loop;
 	this->fd = fd;
 	this->offset = 0;
@@ -298,13 +327,16 @@ namespace System {
 	
       }
       void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
-	struct aiocb* req = new struct aiocb();
-	memset(req,0,sizeof(*req));
-	req->aio_buf = (void*)buffer;
-	req->aio_fildes = fd;
-	req->aio_nbytes = len;
-	req->aio_offset = offset;
+	AsyncIOOperation* req =  new AsyncIOOperation();
+	req->overlapped = new OVERLAPPED();
+	memset(req->overlapped,0,sizeof(OVERLAPPED));
+	req->buffer = (void*)buffer;
+	req->fd = fd;
+	req->buffsz = len;
+	req->overlapped->Offset = (uint32_t)offset;
+	req->overlapped->OffsetHigh = (uint32_t)(offset >> 32); //WHY?!?!?!? This is just plain stupid. Why not use a 64-bit integer?
 	std::shared_ptr<FileStream> thisptr = shared_from_this();
+	WriteFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
 	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
 	  if(!cb.error) {
 	    thisptr->offset+=cb.outlen;
@@ -313,35 +345,46 @@ namespace System {
 	  callback->outlen = cb.outlen;
 	  callback->Process();
 	}));
-	
-	aio_write(req);
       }
       void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
-	struct aiocb* req = new struct aiocb();
-	memset(req,0,sizeof(*req));
-	req->aio_buf = (void*)buffer;
-	req->aio_fildes = fd;
-	req->aio_nbytes = len;
-	req->aio_offset = offset;
-	
-	std::shared_ptr<FileStream> thisptr = shared_from_this();
-	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
-	  if(!cb.error) {
-	    thisptr->offset+=cb.outlen;
-	  }
-	  callback->error = cb.error;
-	  callback->outlen = cb.outlen;
-	  callback->Process();
-	}));
-	aio_read(req);
+		  AsyncIOOperation* req = new AsyncIOOperation();
+		  req->overlapped = new OVERLAPPED();
+		  memset(req->overlapped, 0, sizeof(OVERLAPPED));
+		  req->buffer = (void*)buffer;
+		  req->fd = fd;
+		  req->buffsz = len;
+		  req->overlapped->Offset = (uint32_t)offset;
+		  req->overlapped->OffsetHigh = (uint32_t)(offset >> 32); //WHY?!?!?!? This is just plain stupid. Why not use a 64-bit integer?
+		  std::shared_ptr<FileStream> thisptr = shared_from_this();
+		  WriteFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
+		  iol->AddFd(req, evl, IOCB([=](const IOCallback& cb) {
+			  if (!cb.error) {
+				  thisptr->offset += cb.outlen;
+			  }
+			  callback->error = cb.error;
+			  callback->outlen = cb.outlen;
+			  callback->Process();
+		  }));
       }
     };
     
 
 void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
 {
-  int pfds[2];
-	pipe(pfds);
+	HANDLE pipe;
+	std::wstringstream pipename;
+	pipename << L"\\\\.\\pipe\\";
+	UUID pipeid;
+	UuidCreate(&pipeid);
+	RPC_WSTR str;
+	UuidToStringW(&pipeid, &str);
+	pipename << str;
+	RpcStringFreeW(&str);
+	std::wstring fullname = pipename.str();
+	CreateNamedPipeW(fullname.data(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, PIPE_TYPE_BYTE, 1, 4096, 4096, 0, 0);
+
+
+
 	unsigned char* buffer = new unsigned char[bufflen];
 	std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
 	*cb = IOCB([&](const IOCallback& info){
@@ -366,11 +409,7 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
    std::shared_ptr<EventLoop> loop;
     std::shared_ptr<IO::IOLoop> iol;
     Runtime() {
-      
       loop = std::make_shared<EventLoop>();
-      if(!giol) {
-	giol = std::make_shared<IO::IOLoop>();
-      }
       iol = giol;
       
     }
@@ -378,19 +417,20 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
       
     }
   };
+  //TODO: Fix infinite recursion problem (infinite creation of threads). 
   thread_local Runtime runtime;
   class Initializer {
   public:
     Initializer() {
     
-      std::thread mtr([=](){}); //Fix for pthreads issue
+      std::thread mtr([](){}); //Fix for pthreads issue
       mtr.join();
-      
+	  giol = std::make_shared<IO::IOLoop>();
     }
   };
   static Initializer lib_init;
 
-std::shared_ptr< IO::Stream > IO::FD2S(int fd)
+std::shared_ptr< IO::Stream > IO::FD2S(HANDLE fd)
 {
 
   return std::make_shared<FileStream>(fd,runtime.iol,runtime.loop);

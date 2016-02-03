@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <Windows.h>
 int main(int argc, char** argv) {
   
   System::SetTimeout([&](){
@@ -18,7 +19,8 @@ int main(int argc, char** argv) {
     }
   },200);
   
-  int testfd = open("testfile",O_RDWR | O_CREAT,S_IRUSR | S_IWUSR);
+  HANDLE testfd = CreateFileW(L"testfile",GENERIC_READ | GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,0);
+
   const char* buffy = "Hi world!";
   
   
@@ -42,7 +44,7 @@ int main(int argc, char** argv) {
     System::Enter();
     printf("Worker thread exited\n");
   });
-  
+  OVERLAPPED mp;
   
   System::Enter();
   printf("Main thread exited\n");

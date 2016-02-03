@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <memory>
 #include <chrono>
+#include <Windows.h>
 namespace System {
   class Event {
   public:
@@ -119,7 +120,7 @@ namespace System {
     /**
      * @summary Converts a platform-specific file descriptor to a Stream
      * */
-    std::shared_ptr<Stream> FD2S(int fd);
+    std::shared_ptr<Stream> FD2S(HANDLE fd);
     
     
     
