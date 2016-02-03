@@ -4,15 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 int main(int argc, char** argv) {
- /* std::shared_ptr<System::EventLoop> loop = std::make_shared<System::EventLoop>(); //Main event loop
-  std::shared_ptr<System::IO::IOLoop> ioloop = std::make_shared<System::IO::IOLoop>();
-  std::thread lthread([&](){
-    //loop->Enter();
-  });*/
-//lthread.join(); //Needed to initialize pthreads infrastructure. Otherwise stuff breaks.  
-
-//TODO: Async IO with pselect on dedicated I/O thread
-//http://linux.die.net/man/2/select
   
   System::SetTimeout([&](){
     printf("1 second elapsed\n");
@@ -40,11 +31,6 @@ int main(int argc, char** argv) {
   str->Read(mander,1024,System::IO::IOCB([&](const System::IO::IOCallback& cb){
     printf("Read %i bytes\n%s\n",(int)cb.outlen,mander);
   }));
-  //printf("Sent write request\n");
-  
-  
-  
-  //Enter this thread into an event loop
   System::Enter();
 return 0;
 }
