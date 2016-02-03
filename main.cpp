@@ -44,7 +44,6 @@ int main(int argc, char** argv) {
     System::Enter();
     printf("Worker thread exited\n");
   });
-  OVERLAPPED mp;
   
   System::Enter();
   printf("Main thread exited\n");

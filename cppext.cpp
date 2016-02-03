@@ -356,7 +356,7 @@ namespace System {
 		  req->overlapped->Offset = (uint32_t)offset;
 		  req->overlapped->OffsetHigh = (uint32_t)(offset >> 32); //WHY?!?!?!? This is just plain stupid. Why not use a 64-bit integer?
 		  std::shared_ptr<FileStream> thisptr = shared_from_this();
-		  WriteFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
+		  ReadFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
 		  iol->AddFd(req, evl, IOCB([=](const IOCallback& cb) {
 			  if (!cb.error) {
 				  thisptr->offset += cb.outlen;
