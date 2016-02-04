@@ -209,7 +209,7 @@ namespace System {
 	running = true;
 	int fd = pfds[0];
 	thread = new std::thread([=](){
-	  
+	  struct aiocb* current = 0;
 	  while(running) {
 	    struct aiocb** cblist;
 	    size_t csz;
@@ -218,6 +218,7 @@ namespace System {
 	      
 	      csz = callbacks.size()+1;
 	      cblist = new struct aiocb*[csz];
+	      if(current == 0) {
 	      cblist[0] = new struct aiocb();
 	      memset(cblist[0],0,sizeof(cblist[0]));
 	      unsigned char mander;
@@ -225,6 +226,11 @@ namespace System {
 	      cblist[0]->aio_nbytes = 1;
 	      cblist[0]->aio_fildes = fd;
 	      aio_read(cblist[0]);
+	      current = cblist[0];
+	      }else {
+		cblist[0] = current;
+	      }
+	      
 	      timespec timeout;
 	      timeout.tv_sec = -1;
 	      size_t cpos = 1;
@@ -234,6 +240,10 @@ namespace System {
 	      }
 	    }
 	    aio_suspend(cblist,csz,0);
+	    
+	      if(aio_error(cblist[0]) != EINPROGRESS) {
+		current = 0;
+	      }
 	    for(size_t i = 1;i<csz;i++) {
 	      if(aio_error(cblist[i]) != EINPROGRESS) {
 		//IO completion
@@ -323,7 +333,6 @@ namespace System {
 	req->aio_fildes = fd;
 	req->aio_nbytes = len;
 	req->aio_offset = offset;
-	
 	std::shared_ptr<FileStream> thisptr = shared_from_this();
 	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
 	  if(!cb.error) {
@@ -333,6 +342,7 @@ namespace System {
 	  callback->outlen = cb.outlen;
 	  callback->Process();
 	}));
+	
 	aio_read(req);
       }
     };
@@ -424,6 +434,37 @@ void Enter()
 {
   runtime.loop->Enter();
 }
+
+class InternalMessageEvent:public MessageEvent {
+public:
+  std::shared_ptr<MessageEvent> evt;
+  std::shared_ptr<Message> msg;
+  void Process(){
+    evt->Process();
+  }
+};
+
+class MessageQueueInternal:public MessageQueue {
+public:
+  std::shared_ptr<MessageEvent> listener;
+  std::shared_ptr<EventLoop> boundloop;
+  void Post(const std::shared_ptr<Message>& msg) {
+    std::shared_ptr<InternalMessageEvent> evt = std::make_shared<InternalMessageEvent>();
+    evt->evt = listener;
+    evt->msg = msg;
+    boundloop->Push(evt);
+  }
+};
+
+std::shared_ptr< MessageQueue > Internal::MakeQueue(const std::shared_ptr< MessageEvent >& evt)
+{
+  std::shared_ptr<MessageQueueInternal> retval = std::make_shared<MessageQueueInternal>();
+  retval->listener = evt;
+  retval->boundloop = runtime.loop;
+  return retval;
+}
+
+
 
 
 }
