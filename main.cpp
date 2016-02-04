@@ -3,11 +3,22 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+
+
+class CustomMessage:public System::Message {
+public:
+  std::string txt;
+  CustomMessage(const std::string& msg) {
+    this->txt = msg;
+  }
+};
+
 int main(int argc, char** argv) {
   
   
   std::shared_ptr<System::MessageQueue> inbox = System::MakeQueue([=](const std::shared_ptr<System::Message>& msg){
-    printf("Got a message (from another thread)!\n");
+    std::string safestr = ((CustomMessage*)msg.get())->txt;
+    printf("%s",safestr.data());
   });
   
   
@@ -40,7 +51,7 @@ int main(int argc, char** argv) {
   }));
   
   std::thread worker([&](){
-    inbox->Post(std::make_shared<System::Message>());
+    inbox->Post(std::make_shared<CustomMessage>("This is a message from another thread\n"));
     //This is an example of a worker thread, having its own event loop.
     System::SetTimeout([](){
       printf("2 seconds elapsed, on worker thread\n");

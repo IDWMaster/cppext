@@ -440,6 +440,7 @@ public:
   std::shared_ptr<MessageEvent> evt;
   std::shared_ptr<Message> msg;
   void Process(){
+    evt->msg = msg;
     evt->Process();
   }
 };
