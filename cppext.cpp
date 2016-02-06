@@ -379,18 +379,7 @@ namespace System {
 
 void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
 {
-	HANDLE pipe;
-	std::wstringstream pipename;
-	pipename << L"\\\\.\\pipe\\";
-	UUID pipeid;
-	UuidCreate(&pipeid);
-	RPC_WSTR str;
-	UuidToStringW(&pipeid, &str);
-	pipename << str;
-	RpcStringFreeW(&str);
-	std::wstring fullname = pipename.str();
-	CreateNamedPipeW(fullname.data(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, PIPE_TYPE_BYTE, 1, 4096, 4096, 0, 0);
-
+	
 
 
 	unsigned char* buffer = new unsigned char[bufflen];
