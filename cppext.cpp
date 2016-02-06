@@ -303,6 +303,7 @@ namespace System {
 	    callbacks[fd] = cb;
 	    Ntfy();
       }
+	  //TODO: Race condition on Windows when two threads try and call this destructor at the same time.
       ~IOLoop() {
 	running = false;
 	Ntfy();
