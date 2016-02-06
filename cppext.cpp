@@ -303,7 +303,7 @@ namespace System {
 	    callbacks[fd] = cb;
 	    Ntfy();
       }
-	  //TODO: Race condition on Windows when two threads try and call this destructor at the same time.
+	  //TODO: Somehow we're getting multiple IO loops in here. Shouldn't be happening.
       ~IOLoop() {
 	running = false;
 	Ntfy();
@@ -421,7 +421,6 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
   public:
     Initializer() {
     
-	giol = std::make_shared<IO::IOLoop>();
       std::thread mtr([=](){}); //Fix for pthreads issue
       mtr.join();
 	  giol = std::make_shared<IO::IOLoop>();
