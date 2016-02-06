@@ -3,11 +3,25 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <Windows.h>
+
+
+class CustomMessage:public System::Message {
+public:
+  std::string txt;
+  CustomMessage(const std::string& msg) {
+    this->txt = msg;
+  }
+};
+
 int main(int argc, char** argv) {
   
-	
-
+  
+  std::shared_ptr<System::MessageQueue> inbox = System::MakeQueue([=](const std::shared_ptr<System::Message>& msg){
+    std::string safestr = ((CustomMessage*)msg.get())->txt;
+    printf("%s",safestr.data());
+  });
+  
+  
   System::SetTimeout([&](){
     printf("1 second elapsed\n");
   },1000);
@@ -30,19 +44,17 @@ int main(int argc, char** argv) {
   std::shared_ptr<System::IO::Stream> str = System::IO::FD2S(testfd);
   str->Write(buffy,strlen(buffy),System::IO::IOCB([&](const System::IO::IOCallback& cb){
     printf("AIO completed, error = %i, written = %i\n",(int)cb.error,(int)cb.outlen);
-	std::shared_ptr<System::IO::Stream> readstr = System::IO::FD2S(testfd);
-	
-
-	readstr->Read(mander, 1024, System::IO::IOCB([&](const System::IO::IOCallback& cb) {
-		printf("Read %i bytes\n%s\n", (int)cb.outlen, mander);
-	}));
-
+    std::shared_ptr<System::IO::Stream> readstr = System::IO::FD2S(testfd);
+      readstr->Read(mander,1024,System::IO::IOCB([&](const System::IO::IOCallback& cb){
+      printf("Read %i bytes\n%s\n",(int)cb.outlen,mander);
+  }));
   }));
   
   
   
   
   std::thread worker([&](){
+    inbox->Post(std::make_shared<CustomMessage>("This is a message from another thread\n"));
     //This is an example of a worker thread, having its own event loop.
     System::SetTimeout([](){
       printf("2 seconds elapsed, on worker thread\n");

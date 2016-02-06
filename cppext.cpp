@@ -239,7 +239,7 @@ namespace System {
 			  cblist[0]->overlapped = new OVERLAPPED();
 			  memset(cblist[0]->overlapped, 0, sizeof(OVERLAPPED));
 			  cblist[0]->overlapped->hEvent = CreateEventW(0, true, false, 0);
-			  unsigned char mander;
+	      unsigned char mander;
 			  ReadFile(fd, &mander, 1, 0, cblist[0]->overlapped);
 			  current = cblist[0];
 		  }
@@ -263,7 +263,7 @@ namespace System {
 			GetOverlappedResult(fd, cblist[0]->overlapped, &transferred, false);
 			current = 0;
 		}
-		for(size_t i = 1;i<csz;i++) {
+	    for(size_t i = 1;i<csz;i++) {
 	      if(HasOverlappedIoCompleted(cblist[i]->overlapped)) {
 		//IO completion
 		std::unique_lock<std::mutex> l(mtx); //It's a VERY unique lock!
@@ -363,16 +363,16 @@ namespace System {
 		  req->buffsz = len;
 		  req->overlapped->Offset = (uint32_t)offset;
 		  req->overlapped->OffsetHigh = (uint32_t)(offset >> 32); //WHY?!?!?!? This is just plain stupid. Why not use a 64-bit integer?
-		  std::shared_ptr<FileStream> thisptr = shared_from_this();
+	std::shared_ptr<FileStream> thisptr = shared_from_this();
 		  ReadFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
 		  iol->AddFd(req, evl, IOCB([=](const IOCallback& cb) {
 			  if (!cb.error) {
 				  thisptr->offset += cb.outlen;
-			  }
-			  callback->error = cb.error;
-			  callback->outlen = cb.outlen;
-			  callback->Process();
-		  }));
+	  }
+	  callback->error = cb.error;
+	  callback->outlen = cb.outlen;
+	  callback->Process();
+	}));
       }
     };
     
@@ -420,7 +420,8 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
   public:
     Initializer() {
     
-      std::thread mtr([](){}); //Fix for pthreads issue
+	giol = std::make_shared<IO::IOLoop>();
+      std::thread mtr([=](){}); //Fix for pthreads issue
       mtr.join();
 	  giol = std::make_shared<IO::IOLoop>();
     }
@@ -463,6 +464,38 @@ void Enter()
 {
   runtime.loop->Enter();
 }
+
+class InternalMessageEvent:public MessageEvent {
+public:
+  std::shared_ptr<MessageEvent> evt;
+  std::shared_ptr<Message> msg;
+  void Process(){
+    evt->msg = msg;
+    evt->Process();
+  }
+};
+
+class MessageQueueInternal:public MessageQueue {
+public:
+  std::shared_ptr<MessageEvent> listener;
+  std::shared_ptr<EventLoop> boundloop;
+  void Post(const std::shared_ptr<Message>& msg) {
+    std::shared_ptr<InternalMessageEvent> evt = std::make_shared<InternalMessageEvent>();
+    evt->evt = listener;
+    evt->msg = msg;
+    boundloop->Push(evt);
+  }
+};
+
+std::shared_ptr< MessageQueue > Internal::MakeQueue(const std::shared_ptr< MessageEvent >& evt)
+{
+  std::shared_ptr<MessageQueueInternal> retval = std::make_shared<MessageQueueInternal>();
+  retval->listener = evt;
+  retval->boundloop = runtime.loop;
+  return retval;
+}
+
+
 
 
 }

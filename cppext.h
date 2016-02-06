@@ -125,6 +125,40 @@ namespace System {
     
     
     }
+    
+    class Message {
+    public:
+      virtual ~Message(){};
+    };
+    class MessageEvent:public Event {
+    public:
+      std::shared_ptr<Message> msg;
+      virtual ~MessageEvent(){};
+    };
+    
+    template<typename T>
+    class MessageEventFunction:public MessageEvent {
+    public:
+      T function;
+      MessageEventFunction(const T& func):function(func){}
+      void Process() {
+	function(msg);
+      }
+    };
+    
+    class MessageQueue {
+    public:
+      virtual void Post(const std::shared_ptr<Message>& message) = 0;
+      virtual ~MessageQueue(){};
+    };
+    namespace Internal {
+      std::shared_ptr<MessageQueue> MakeQueue(const std::shared_ptr<MessageEvent>& evt);
+    }
+    template<typename T>
+    static std::shared_ptr<MessageQueue> MakeQueue(const T& callback) {
+      return Internal::MakeQueue(std::make_shared<MessageEventFunction<T>>(callback));
+    }
+    
 }
 
 #endif
