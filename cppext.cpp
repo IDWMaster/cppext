@@ -580,7 +580,7 @@ public:
       memset(&saddr,0,sizeof(saddr));
       saddr.sin6_family = AF_INET6;
       memcpy(&saddr.sin6_addr,ep.ip.raw,16);
-      saddr.sin6_port = ep.port;
+      saddr.sin6_port = htons(ep.port);
       sendto(fd,buffer,size,0,(sockaddr*)&saddr,sizeof(saddr));
       
   }
@@ -595,7 +595,7 @@ public:
        cb->error = bytes<0;
        cb->outlen = bytes;
        memcpy(cb->receivedFrom.ip.raw,&saddr.sin6_addr,16);
-       
+       cb->receivedFrom.port = ntohs(saddr.sin6_port);
        cb->Process();
     })));
    }
@@ -605,7 +605,8 @@ public:
     saddr.sin6_family = AF_INET6;
     socklen_t slen = sizeof(saddr);
     getsockname(fd,(sockaddr*)&saddr,&slen);
-    out.port = saddr.sin6_port;
+    out.port = ntohs(saddr.sin6_port);
+    
     memcpy(out.ip.raw,&saddr.sin6_addr,16);
   }
   ~InternalUDPSocket(){
@@ -619,7 +620,7 @@ std::shared_ptr< UDPSocket > CreateUDPSocket(const IPEndpoint& ep)
   sockaddr_in6 addr;
   memset(&addr,0,sizeof(addr));
   memcpy(&addr.sin6_addr,ep.ip.raw,16);
-  addr.sin6_port = ep.port;
+  addr.sin6_port = htons(ep.port);
   addr.sin6_family = AF_INET6;
   bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
   
