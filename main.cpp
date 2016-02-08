@@ -60,6 +60,16 @@ int main(int argc, char** argv) {
     printf("Worker thread exited\n");
   });
   
+  std::shared_ptr<System::Net::UDPSocket> s = System::Net::CreateUDPSocket();
+  unsigned char recvbuff[1024];
+  memset(recvbuff,0,1024);
+  s->Receive(recvbuff,1024,System::Net::F2UDPCB([=](auto& bot){
+    printf("Network client says: %s\n",(char*)recvbuff);
+  }));
+  System::Net::IPEndpoint ep;
+  s->GetLocalEndpoint(ep);
+  s->Send("Hi world!",9,ep);
+  
   
   System::Enter();
   printf("Main thread exited\n");
