@@ -63,11 +63,13 @@ int main(int argc, char** argv) {
   std::shared_ptr<System::Net::UDPSocket> s = System::Net::CreateUDPSocket();
   unsigned char recvbuff[1024];
   memset(recvbuff,0,1024);
-  s->Receive(recvbuff,1024,System::Net::F2UDPCB([=](auto& bot){
-    printf("Network client says: %s\n",(char*)recvbuff);
+  unsigned char* rptr = recvbuff;
+  s->Receive(recvbuff,1024,System::Net::F2UDPCB([=](System::Net::UDPCallback& bot){
+    printf("Network client (%i byte message) says: %s\n",(int)bot.outlen,(char*)rptr);
   }));
   System::Net::IPEndpoint ep;
   s->GetLocalEndpoint(ep);
+  ep.ip = "::1";
   s->Send("Hi world!",9,ep);
   
   

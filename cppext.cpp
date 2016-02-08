@@ -572,9 +572,8 @@ IPAddress::IPAddress(const uint64_t* raw)
 class InternalUDPSocket:public UDPSocket {
 public:
   int fd;
-  IPEndpoint mp;
   InternalUDPSocket() {
-    fd = socket(AF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+    fd = socket(PF_INET6,SOCK_DGRAM,IPPROTO_UDP);
   }
   void Send(const void* buffer, size_t size, const IPEndpoint& ep) {
        sockaddr_in6 saddr;
@@ -601,7 +600,13 @@ public:
     })));
    }
   void GetLocalEndpoint(IPEndpoint& out) {
-    out = mp;
+    sockaddr_in6 saddr;
+    memset(&saddr,0,sizeof(saddr));
+    saddr.sin6_family = AF_INET6;
+    socklen_t slen = sizeof(saddr);
+    getsockname(fd,(sockaddr*)&saddr,&slen);
+    out.port = saddr.sin6_port;
+    memcpy(out.ip.raw,&saddr.sin6_addr,16);
   }
   ~InternalUDPSocket(){
     close(fd);
@@ -617,7 +622,7 @@ std::shared_ptr< UDPSocket > CreateUDPSocket(const IPEndpoint& ep)
   addr.sin6_port = ep.port;
   addr.sin6_family = AF_INET6;
   bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
-  retval->mp = ep;
+  
   return retval;
 }
 std::shared_ptr< UDPSocket > CreateUDPSocket()
@@ -630,8 +635,7 @@ std::shared_ptr< UDPSocket > CreateUDPSocket()
   addr.sin6_family = AF_INET6;
   addr.sin6_port = 0;
   bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
-  memcpy(retval->mp.ip.raw,&addr.sin6_addr,16);
-  retval->mp.port = addr.sin6_port;
+
   return retval;
 }
 
