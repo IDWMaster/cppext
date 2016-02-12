@@ -46,6 +46,18 @@ public:
         while(Read(mander) != 0){}
         return retval;
     }
+    template<typename T>
+    void Write(const T& val){
+      memcpy(ptr,val,sizeof(val));
+      ptr+=sizeof(val);
+      length-=sizeof(val);
+    }
+    void Write(const char* str) {
+      size_t slen = strlen(str);
+      memcpy(ptr,str,slen);
+      ptr+=slen;
+      length-=slen;
+    }
 };
   
   
