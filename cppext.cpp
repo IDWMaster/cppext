@@ -98,11 +98,22 @@ namespace System {
       while(running && refcount) {
 	std::mutex mtx;
 	std::unique_lock<std::mutex> l(pendingEvents_mutex);
-	while(pendingEvents.size()) {
-	  std::shared_ptr<Event> evt = pendingEvents.front();
-	  pendingEvents.pop();
-	  evt->Process();
+	if(pendingEvents.size()) {
+	  std::shared_ptr<Event>* evts = new std::shared_ptr<Event>[pendingEvents.size()];
+	  size_t sz = pendingEvents.size();
+	  for(size_t i = 0;i<sz;i++) {
+	    evts[i] = pendingEvents.front();
+	    pendingEvents.pop();
+	  }
+	  l.unlock();
+	  for(size_t i = 0;i<sz;i++) {
+	    evts[i]->Process();
+	  }
+	  l.lock();
+	  
+	  delete[] evts;
 	}
+	
 	if(running && refcount) {
 	  //Check for timers
 	  if(timers.size()) {

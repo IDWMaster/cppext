@@ -69,6 +69,7 @@ int main(int argc, char** argv) {
   }));
   System::Net::IPEndpoint ep;
   s->GetLocalEndpoint(ep);
+  
   ep.ip = "::1";
   s->Send("Hi world!",9,ep);
   
