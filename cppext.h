@@ -4,7 +4,50 @@
 #include <memory>
 #include <chrono>
 #include <string.h>
+
+
+
 namespace System {
+  
+  
+  class BStream {
+public:
+    unsigned char* ptr;
+    size_t length;
+    BStream(unsigned char* buffer, size_t sz) {
+        this->ptr = buffer;
+        this->length = sz;
+    }
+    unsigned char* Increment(size_t sz) {
+    	unsigned char* retval = ptr;
+    	if(sz>length) {
+    		throw "up";
+    	}
+    	length-=sz;
+    	ptr+=sz;
+    	return retval;
+    }
+    void Read(unsigned char* buffer, size_t len) {
+        if(len>length) {
+            throw "up";
+        }
+        memcpy(buffer,ptr,len);
+        ptr+=len;
+        length-=len;
+    }
+    template<typename T>
+    T& Read(T& val) {
+        Read((unsigned char*)&val,sizeof(T));
+        return val;
+    }
+    char* ReadString() {
+        char* retval = (char*)ptr;
+        char mander;
+        while(Read(mander) != 0){}
+        return retval;
+    }
+};
+  
   
   
   namespace ABI {
