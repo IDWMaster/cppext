@@ -48,7 +48,7 @@ public:
     }
     template<typename T>
     void Write(const T& val){
-      memcpy(ptr,val,sizeof(val));
+      memcpy(ptr,&val,sizeof(val));
       ptr+=sizeof(val);
       length-=sizeof(val);
     }
