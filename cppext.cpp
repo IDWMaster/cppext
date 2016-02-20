@@ -9,6 +9,7 @@
 #include <string.h>
 #include <signal.h>
 #include <sstream>
+
 namespace System {
   
   
@@ -91,11 +92,22 @@ namespace System {
       while(running && refcount) {
 	std::mutex mtx;
 	std::unique_lock<std::mutex> l(pendingEvents_mutex);
-	while(pendingEvents.size()) {
-	  std::shared_ptr<Event> evt = pendingEvents.front();
+	if(pendingEvents.size()) {
+	  std::shared_ptr<Event>* evts = new std::shared_ptr<Event>[pendingEvents.size()];
+	  size_t sz = pendingEvents.size();
+	  for(size_t i = 0;i<sz;i++) {
+	    evts[i] = pendingEvents.front();
 	  pendingEvents.pop();
-	  evt->Process();
 	}
+	  l.unlock();
+	  for(size_t i = 0;i<sz;i++) {
+	    evts[i]->Process();
+	  }
+	  l.lock();
+	  
+	  delete[] evts;
+	}
+	
 	if(running && refcount) {
 	  //Check for timers
 	  if(timers.size()) {
@@ -189,6 +201,90 @@ namespace System {
       }
       
     };
+    
+    class GenericIOCallback {
+    public:
+      std::shared_ptr<System::EventLoop> loop;
+      std::shared_ptr<System::Event> event;
+      GenericIOCallback(const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::Event>& event) {
+	this->loop = loop;
+	this->event = event;
+	this->loop->AddRef();
+      }
+      ~GenericIOCallback() {
+	this->loop->RemoveRef();
+      }
+    };
+    
+    class NetIOLoop {
+    public:
+      int ntfyfd;
+      std::thread* thread;
+      std::mutex mtx;
+      std::map<int,std::shared_ptr<GenericIOCallback>> callbacks;
+      bool running;
+      NetIOLoop() {
+	int pipes[2];
+	pipe(pipes);
+	ntfyfd = pipes[1];
+	running = true;
+	this->thread = new std::thread([=](){
+	  while(running) {
+	    fd_set fds;
+	    FD_ZERO(&fds);
+	    FD_SET(pipes[0],&fds);
+	    int highestfd = pipes[0];
+	    std::vector<int> fdlist;
+	    
+	    {
+	      std::unique_lock<std::mutex> l(mtx);
+	      fdlist.resize(callbacks.size());
+	      int pos = 0;
+	      for(auto i = callbacks.begin(); i != callbacks.end();i++) {
+		FD_SET(i->first,&fds);
+		if(i->first>highestfd) {
+		  highestfd = i->first;
+		}
+		fdlist[pos] = i->first;
+		pos++;
+	      }
+	    }
+	    struct timeval timeout;
+	    memset(&timeout,0,sizeof(timeout));
+	    select(highestfd+1,&fds,0,0,&timeout);
+	    if(FD_ISSET(pipes[0],&fds)) {
+	      unsigned char mander;
+	      read(pipes[0],&mander,1);
+	    }
+	    for(size_t i = 0;i<fdlist.size();i++) {
+	      if(FD_ISSET(fdlist[i],&fds)) {
+		std::unique_lock<std::mutex> l(mtx);
+		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
+		iocb->loop->Push(iocb->event);
+		callbacks.erase(fdlist[i]);
+	      }
+	    }
+	  }
+	  close(pipes[0]);
+	});
+      }
+      void Ntfy() {
+	unsigned char izard;
+	write(ntfyfd,&izard,1);
+      }
+      void AddFD(int fd, const std::shared_ptr<GenericIOCallback>& evt) {
+	std::unique_lock<std::mutex> l(mtx);
+	callbacks[fd] = evt;
+      }
+      ~NetIOLoop() {
+	running = false;
+	Ntfy();
+	thread->join();
+	delete thread;
+	close(ntfyfd);
+      
+      }
+    };
 	class AsyncIOOperation {
 	public:
 		LPOVERLAPPED overlapped;
@@ -241,11 +337,11 @@ namespace System {
 			  cblist[0]->overlapped->hEvent = CreateEventW(0, true, false, 0);
 	      unsigned char mander;
 			  ReadFile(fd, &mander, 1, 0, cblist[0]->overlapped);
-			  current = cblist[0];
+	      current = cblist[0];
 		  }
 		  else {
-			  cblist[0] = current;
-		  }
+		cblist[0] = current;
+	      }
 	      size_t cpos = 1;
 	      for(auto i = callbacks.begin();i!= callbacks.end();i++) {
 		cblist[cpos] = i->first;
@@ -261,8 +357,8 @@ namespace System {
 		if (HasOverlappedIoCompleted(cblist[0]->overlapped)) {
 			DWORD transferred;
 			GetOverlappedResult(fd, cblist[0]->overlapped, &transferred, false);
-			current = 0;
-		}
+		current = 0;
+	      }
 	    for(size_t i = 1;i<csz;i++) {
 	      if(HasOverlappedIoCompleted(cblist[i]->overlapped)) {
 		//IO completion
@@ -287,6 +383,7 @@ namespace System {
 	    
 	      delete[] cblist;
 	  }
+	  close(fd);
 	});
       }
       void Ntfy() {
@@ -308,7 +405,7 @@ namespace System {
 	running = false;
 	Ntfy();
 	thread->join();
-	
+	close(ntfyfd);
       }
     };
     
@@ -495,10 +592,96 @@ std::shared_ptr< MessageQueue > Internal::MakeQueue(const std::shared_ptr< Messa
   return retval;
 }
 
+namespace Net {
+IPAddress::IPAddress(const char* str)
+{
+  inet_pton(AF_INET6,str,raw);
+}
+IPAddress::IPAddress(const uint64_t* raw)
+{
+  this->raw[0] = raw[0]; //Can't get much more efficient than this; although maybe SIMD would be faster.
+  this->raw[1] = raw[1];
+}
+
+class InternalUDPSocket:public UDPSocket {
+public:
+  int fd;
+  InternalUDPSocket() {
+    fd = socket(PF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+  }
+  void Send(const void* buffer, size_t size, const IPEndpoint& ep) {
+       sockaddr_in6 saddr;
+      memset(&saddr,0,sizeof(saddr));
+      saddr.sin6_family = AF_INET6;
+      memcpy(&saddr.sin6_addr,ep.ip.raw,16);
+      saddr.sin6_port = htons(ep.port);
+      sendto(fd,buffer,size,0,(sockaddr*)&saddr,sizeof(saddr));
+
+  }
+   void Receive(void* buffer, size_t size, const std::shared_ptr< UDPCallback >& cb) {
+
+     System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+       sockaddr_in6 saddr;
+      memset(&saddr,0,sizeof(saddr));
+      saddr.sin6_family = AF_INET6;
+      socklen_t slen = sizeof(saddr);
+       int bytes = recvfrom(fd,buffer,size,0,(sockaddr*)&saddr,&slen);
+       cb->error = bytes<0;
+       cb->outlen = bytes;
+       memcpy(cb->receivedFrom.ip.raw,&saddr.sin6_addr,16);
+       cb->receivedFrom.port = ntohs(saddr.sin6_port);
+       cb->Process();
+    })));
+}
+  void GetLocalEndpoint(IPEndpoint& out) {
+    sockaddr_in6 saddr;
+    memset(&saddr,0,sizeof(saddr));
+    saddr.sin6_family = AF_INET6;
+    socklen_t slen = sizeof(saddr);
+    getsockname(fd,(sockaddr*)&saddr,&slen);
+    out.port = ntohs(saddr.sin6_port);
+    
+    memcpy(out.ip.raw,&saddr.sin6_addr,16);
+  }
+  ~InternalUDPSocket(){
+    close(fd);
+  }
+};
+
+std::shared_ptr< UDPSocket > CreateUDPSocket(const IPEndpoint& ep)
+{
+  std::shared_ptr<InternalUDPSocket> retval = std::make_shared<InternalUDPSocket>();
+  sockaddr_in6 addr;
+  memset(&addr,0,sizeof(addr));
+  memcpy(&addr.sin6_addr,ep.ip.raw,16);
+  addr.sin6_port = htons(ep.port);
+  addr.sin6_family = AF_INET6;
+  bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
+  
+  return retval;
+}
+std::shared_ptr< UDPSocket > CreateUDPSocket()
+{
+  
+  std::shared_ptr<InternalUDPSocket> retval = std::make_shared<InternalUDPSocket>();
+  sockaddr_in6 addr;
+  memset(&addr,0,sizeof(addr));
+  addr.sin6_addr = in6addr_any;
+  addr.sin6_family = AF_INET6;
+  addr.sin6_port = 0;
+  bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
+
+  return retval;
+}
+
 
 
 
 }
+
+
+}
+
 
 
 

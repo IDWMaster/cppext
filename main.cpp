@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     std::shared_ptr<System::IO::Stream> readstr = System::IO::FD2S(testfd);
       readstr->Read(mander,1024,System::IO::IOCB([&](const System::IO::IOCallback& cb){
       printf("Read %i bytes\n%s\n",(int)cb.outlen,mander);
-  }));
+    }));
   }));
   
   
@@ -62,6 +62,20 @@ int main(int argc, char** argv) {
     System::Enter();
     printf("Worker thread exited\n");
   });
+  
+  std::shared_ptr<System::Net::UDPSocket> s = System::Net::CreateUDPSocket();
+  unsigned char recvbuff[1024];
+  memset(recvbuff,0,1024);
+  unsigned char* rptr = recvbuff;
+  s->Receive(recvbuff,1024,System::Net::F2UDPCB([=](System::Net::UDPCallback& bot){
+    printf("Network client (%i byte message) says: %s\n",(int)bot.outlen,(char*)rptr);
+  }));
+  System::Net::IPEndpoint ep;
+  s->GetLocalEndpoint(ep);
+  
+  ep.ip = "::1";
+  s->Send("Hi world!",9,ep);
+  
   
   System::Enter();
   printf("Main thread exited\n");
