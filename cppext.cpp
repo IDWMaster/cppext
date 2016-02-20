@@ -1,3 +1,6 @@
+
+#include <WS2tcpip.h>
+#include <WinSock2.h>
 #include "cppext.h"
 #include <memory>
 #include <queue>
@@ -216,81 +219,10 @@ namespace System {
       }
     };
     
-    class NetIOLoop {
-    public:
-      int ntfyfd;
-      std::thread* thread;
-      std::mutex mtx;
-      std::map<int,std::shared_ptr<GenericIOCallback>> callbacks;
-      bool running;
-      NetIOLoop() {
-	int pipes[2];
-	pipe(pipes);
-	ntfyfd = pipes[1];
-	running = true;
-	this->thread = new std::thread([=](){
-	  while(running) {
-	    fd_set fds;
-	    FD_ZERO(&fds);
-	    FD_SET(pipes[0],&fds);
-	    int highestfd = pipes[0];
-	    std::vector<int> fdlist;
-	    
-	    {
-	      std::unique_lock<std::mutex> l(mtx);
-	      fdlist.resize(callbacks.size());
-	      int pos = 0;
-	      for(auto i = callbacks.begin(); i != callbacks.end();i++) {
-		FD_SET(i->first,&fds);
-		if(i->first>highestfd) {
-		  highestfd = i->first;
-		}
-		fdlist[pos] = i->first;
-		pos++;
-	      }
-	    }
-	    struct timeval timeout;
-	    memset(&timeout,0,sizeof(timeout));
-	    select(highestfd+1,&fds,0,0,&timeout);
-	    if(FD_ISSET(pipes[0],&fds)) {
-	      unsigned char mander;
-	      read(pipes[0],&mander,1);
-	    }
-	    for(size_t i = 0;i<fdlist.size();i++) {
-	      if(FD_ISSET(fdlist[i],&fds)) {
-		std::unique_lock<std::mutex> l(mtx);
-		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
-		iocb->loop->Push(iocb->event);
-		callbacks.erase(fdlist[i]);
-	      }
-	    }
-	  }
-	  close(pipes[0]);
-	});
-      }
-      void Ntfy() {
-	unsigned char izard;
-	write(ntfyfd,&izard,1);
-      }
-      void AddFD(int fd, const std::shared_ptr<GenericIOCallback>& evt) {
-	std::unique_lock<std::mutex> l(mtx);
-	callbacks[fd] = evt;
-      }
-      ~NetIOLoop() {
-	running = false;
-	Ntfy();
-	thread->join();
-	delete thread;
-	close(ntfyfd);
-      
-      }
-    };
-	class AsyncIOOperation {
+    class AsyncIOOperation {
 	public:
 		LPOVERLAPPED overlapped;
 		HANDLE fd;
-		void* buffer;
-		size_t buffsz;
 	};
     /**
      * Represents a backround I/O thread
@@ -303,6 +235,8 @@ namespace System {
       std::map<AsyncIOOperation*,std::shared_ptr<IOReadyCallback>> callbacks;
       std::mutex mtx;
       IOLoop() {
+		  WSADATA wsaData;
+		  WSAStartup(MAKEWORD(2, 2), &wsaData);
 		  HANDLE pipe; 
 	std::wstringstream pipename;
 	pipename<<L"\\\\.\\pipe\\";
@@ -383,7 +317,7 @@ namespace System {
 	    
 	      delete[] cblist;
 	  }
-	  close(fd);
+	  CloseHandle(fd);
 	});
       }
       void Ntfy() {
@@ -405,7 +339,7 @@ namespace System {
 	running = false;
 	Ntfy();
 	thread->join();
-	close(ntfyfd);
+	CloseHandle(ntfyfd);
       }
     };
     
@@ -436,13 +370,11 @@ namespace System {
 	AsyncIOOperation* req =  new AsyncIOOperation();
 	req->overlapped = new OVERLAPPED();
 	memset(req->overlapped,0,sizeof(OVERLAPPED));
-	req->buffer = (void*)buffer;
 	req->fd = fd;
-	req->buffsz = len;
 	req->overlapped->Offset = (uint32_t)offset;
 	req->overlapped->OffsetHigh = (uint32_t)(offset >> 32); //WHY?!?!?!? This is just plain stupid. Why not use a 64-bit integer?
 	std::shared_ptr<FileStream> thisptr = shared_from_this();
-	WriteFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
+	WriteFile(fd, buffer, len, 0, req->overlapped);
 	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
 	  if(!cb.error) {
 	    thisptr->offset+=cb.outlen;
@@ -456,13 +388,11 @@ namespace System {
 		  AsyncIOOperation* req = new AsyncIOOperation();
 		  req->overlapped = new OVERLAPPED();
 		  memset(req->overlapped, 0, sizeof(OVERLAPPED));
-		  req->buffer = (void*)buffer;
 		  req->fd = fd;
-		  req->buffsz = len;
 		  req->overlapped->Offset = (uint32_t)offset;
 		  req->overlapped->OffsetHigh = (uint32_t)(offset >> 32); //WHY?!?!?!? This is just plain stupid. Why not use a 64-bit integer?
 	std::shared_ptr<FileStream> thisptr = shared_from_this();
-		  ReadFile(fd, req->buffer, req->buffsz, 0, req->overlapped);
+		  ReadFile(fd, buffer, len, 0, req->overlapped);
 		  iol->AddFd(req, evl, IOCB([=](const IOCallback& cb) {
 			  if (!cb.error) {
 				  thisptr->offset += cb.outlen;
@@ -605,9 +535,9 @@ IPAddress::IPAddress(const uint64_t* raw)
 
 class InternalUDPSocket:public UDPSocket {
 public:
-  int fd;
+  SOCKET fd;
   InternalUDPSocket() {
-    fd = socket(PF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+    fd = WSASocket(PF_INET6,SOCK_DGRAM,IPPROTO_UDP,0,0,WSA_FLAG_OVERLAPPED);
   }
   void Send(const void* buffer, size_t size, const IPEndpoint& ep) {
        sockaddr_in6 saddr;
@@ -615,23 +545,51 @@ public:
       saddr.sin6_family = AF_INET6;
       memcpy(&saddr.sin6_addr,ep.ip.raw,16);
       saddr.sin6_port = htons(ep.port);
-      sendto(fd,buffer,size,0,(sockaddr*)&saddr,sizeof(saddr));
+      //WSASendTo()
+	  //sendto(fd,buffer,size,0,(sockaddr*)&saddr,sizeof(saddr));
+	  System::IO::AsyncIOOperation* op = new System::IO::AsyncIOOperation();
+	  op->overlapped = new OVERLAPPED();
+	  memset(op->overlapped, 0, sizeof(OVERLAPPED));
+	  WSABUF* buffy = new WSABUF();
+	  buffy->buf = (char*)buffer;
+	  buffy->len = size;
+	  WSASendTo(fd, buffy, 1, 0, 0, (sockaddr*)&saddr, sizeof(saddr), op->overlapped, 0);
+	  runtime.iol->AddFd(op, runtime.loop, System::IO::IOCB([=](const System::IO::IOCallback& results) {
+		  delete buffy;
+		  //Discard results.
 
+	  }));
   }
    void Receive(void* buffer, size_t size, const std::shared_ptr< UDPCallback >& cb) {
+	   
+    
+	   sockaddr_in6* saddr = new sockaddr_in6();
+	   memset(saddr, 0, sizeof(sockaddr_in6));
+	   saddr->sin6_family = AF_INET6;
+	   int* addrlen = new int();
+	   *addrlen = sizeof(sockaddr_in6);
+	   //WSASendTo()
+	   //sendto(fd,buffer,size,0,(sockaddr*)&saddr,sizeof(saddr));
+	   System::IO::AsyncIOOperation* op = new System::IO::AsyncIOOperation();
+	   op->overlapped = new OVERLAPPED();
+	   memset(op->overlapped, 0, sizeof(OVERLAPPED));
+	   WSABUF* buffy = new WSABUF();
+	   buffy->buf = (char*)buffer;
+	   buffy->len = size;
+	   DWORD* flags = new DWORD(0);
 
-     System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
-       sockaddr_in6 saddr;
-      memset(&saddr,0,sizeof(saddr));
-      saddr.sin6_family = AF_INET6;
-      socklen_t slen = sizeof(saddr);
-       int bytes = recvfrom(fd,buffer,size,0,(sockaddr*)&saddr,&slen);
-       cb->error = bytes<0;
-       cb->outlen = bytes;
-       memcpy(cb->receivedFrom.ip.raw,&saddr.sin6_addr,16);
-       cb->receivedFrom.port = ntohs(saddr.sin6_port);
-       cb->Process();
-    })));
+	   WSARecvFrom(fd, buffy, 1, 0, flags, (sockaddr*)saddr, addrlen, op->overlapped,0);
+	   runtime.iol->AddFd(op, runtime.loop, System::IO::IOCB([=](const System::IO::IOCallback& results) {
+		   delete buffy;
+		   delete flags;
+		   cb->error = results.error;
+		   cb->outlen = results.outlen;
+		   memcpy(cb->receivedFrom.ip.raw, &saddr->sin6_addr, sizeof(saddr->sin6_addr));
+		   cb->receivedFrom.port = ntohs(saddr->sin6_port);
+			   delete saddr;
+			   delete addrlen;
+			   cb->Process();
+	   }));
 }
   void GetLocalEndpoint(IPEndpoint& out) {
     sockaddr_in6 saddr;
@@ -644,7 +602,7 @@ public:
     memcpy(out.ip.raw,&saddr.sin6_addr,16);
   }
   ~InternalUDPSocket(){
-    close(fd);
+	  closesocket(fd);
   }
 };
 
@@ -656,7 +614,7 @@ std::shared_ptr< UDPSocket > CreateUDPSocket(const IPEndpoint& ep)
   memcpy(&addr.sin6_addr,ep.ip.raw,16);
   addr.sin6_port = htons(ep.port);
   addr.sin6_family = AF_INET6;
-  bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
+  int rv = bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
   
   return retval;
 }
@@ -669,7 +627,7 @@ std::shared_ptr< UDPSocket > CreateUDPSocket()
   addr.sin6_addr = in6addr_any;
   addr.sin6_family = AF_INET6;
   addr.sin6_port = 0;
-  bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
+  int rv = bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
 
   return retval;
 }
