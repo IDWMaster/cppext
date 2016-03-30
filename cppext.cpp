@@ -245,7 +245,9 @@ namespace System {
 	    {
 	      std::unique_lock<std::mutex> l(mtx);
 	      fdlist.resize(callbacks.size());
-	      int pos = 0;
+	      int pos = 1;
+	      FD_SET(pipes[0],&fds);
+	      
 	      for(auto i = callbacks.begin(); i != callbacks.end();i++) {
 		FD_SET(i->first,&fds);
 		if(i->first>highestfd) {
@@ -257,11 +259,13 @@ namespace System {
 	    }
 	    struct timeval timeout;
 	    memset(&timeout,0,sizeof(timeout));
+	    timeout.tv_sec = -1;
 	    select(highestfd+1,&fds,0,0,&timeout);
 	    if(FD_ISSET(pipes[0],&fds)) {
 	      unsigned char mander;
 	      read(pipes[0],&mander,1);
 	    }
+	    
 	    for(size_t i = 0;i<fdlist.size();i++) {
 	      if(FD_ISSET(fdlist[i],&fds)) {
 		std::unique_lock<std::mutex> l(mtx);
@@ -269,6 +273,10 @@ namespace System {
 		iocb->loop->Push(iocb->event);
 		callbacks.erase(fdlist[i]);
 	      }
+	    }
+	    if(FD_ISSET(pipes[0],&fds)) {
+	      unsigned char mander;
+	      read(pipes[0],&mander,1);
 	    }
 	  }
 	  close(pipes[0]);
