@@ -245,6 +245,10 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	 * */
 	IPAddress(const char* str);
 	IPAddress(const uint64_t* raw);
+	IPAddress(const IPAddress& other) {
+	  raw[0] = other.raw[0];
+	  raw[1] = other.raw[1];
+	}
 	IPAddress(){};
       };
       class IPEndpoint {
@@ -252,10 +256,17 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	IPAddress ip;
 	uint16_t port;
 	bool operator<(const IPEndpoint& other) const {
-	  return memcmp(this,&other,sizeof(other)) < 0;
-	}
-	IPEndpoint() {
+	  uint64_t cop[3];
+	  cop[0] = ip.raw[0];
+	  cop[1] = ip.raw[1];
+	  cop[2] = (uint64_t)port;
+	  uint64_t bop[3];
+	  bop[0] = other.ip.raw[0];
+	  bop[1] = other.ip.raw[1];
+	  bop[2] = (uint64_t)port;
 	  
+	  
+	  return memcmp(cop,bop,3*8) < 0;
 	}
 	
       };

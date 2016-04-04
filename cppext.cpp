@@ -600,9 +600,10 @@ public:
       sendto(fd,buffer,size,0,(sockaddr*)&saddr,sizeof(saddr));
       
   }
-   void Receive(void* buffer, size_t size, const std::shared_ptr< UDPCallback >& cb) {
+   void Receive(void* buffer, size_t size, const std::shared_ptr< UDPCallback >& _cb) {
      runtime.loop->AddRef();
      System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+       std::shared_ptr<UDPCallback> cb = _cb;
        sockaddr_in6 saddr;
       memset(&saddr,0,sizeof(saddr));
       saddr.sin6_family = AF_INET6;
