@@ -151,6 +151,8 @@ namespace System {
 	  }
 	}
       }
+      
+      
     }
   };
   
@@ -245,9 +247,7 @@ namespace System {
 	    {
 	      std::unique_lock<std::mutex> l(mtx);
 	      fdlist.resize(callbacks.size());
-	      int pos = 1;
-	      FD_SET(pipes[0],&fds);
-	      
+	      int pos = 0;
 	      for(auto i = callbacks.begin(); i != callbacks.end();i++) {
 		FD_SET(i->first,&fds);
 		if(i->first>highestfd) {
@@ -257,13 +257,9 @@ namespace System {
 		pos++;
 	      }
 	    }
-	    struct timeval timeout;
-	    memset(&timeout,0,sizeof(timeout));
-	    timeout.tv_sec = -1;
-	    select(highestfd+1,&fds,0,0,&timeout);
-	    if(FD_ISSET(pipes[0],&fds)) {
-	      unsigned char mander;
-	      read(pipes[0],&mander,1);
+	    int rval = select(highestfd+1,&fds,0,0,0);
+	    if(rval == -1) {
+	      continue;
 	    }
 	    
 	    for(size_t i = 0;i<fdlist.size();i++) {
@@ -289,6 +285,7 @@ namespace System {
       void AddFD(int fd, const std::shared_ptr<GenericIOCallback>& evt) {
 	std::unique_lock<std::mutex> l(mtx);
 	callbacks[fd] = evt;
+	Ntfy();
       }
       ~NetIOLoop() {
 	running = false;
@@ -604,7 +601,7 @@ public:
       
   }
    void Receive(void* buffer, size_t size, const std::shared_ptr< UDPCallback >& cb) {
-     
+     runtime.loop->AddRef();
      System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
        sockaddr_in6 saddr;
       memset(&saddr,0,sizeof(saddr));
@@ -616,6 +613,7 @@ public:
        memcpy(cb->receivedFrom.ip.raw,&saddr.sin6_addr,16);
        cb->receivedFrom.port = ntohs(saddr.sin6_port);
        cb->Process();
+       runtime.loop->RemoveRef();
     })));
    }
   void GetLocalEndpoint(IPEndpoint& out) {
