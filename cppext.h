@@ -263,7 +263,7 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	  uint64_t bop[3];
 	  bop[0] = other.ip.raw[0];
 	  bop[1] = other.ip.raw[1];
-	  bop[2] = (uint64_t)port;
+	  bop[2] = (uint64_t)other.port;
 	  
 	  
 	  return memcmp(cop,bop,3*8) < 0;
