@@ -283,6 +283,19 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	virtual ~UDPSocket(){};
       };
       
+      class TCPServer {
+      public:
+	virtual void GetLocalEndpoint(IPEndpoint& out) = 0;
+	virtual ~TCPServer(){};
+      };
+      class TCPConnectCallback {
+      public:
+	virtual void Process(const std::shared_ptr<System::IO::Stream>& str, const IPEndpoint& ep) = 0;
+	virtual ~TCPConnectCallback(){};
+      };
+      std::shared_ptr<TCPServer> CreateTCPServer(const IPEndpoint& ep, const std::shared_ptr<TCPConnectCallback>& onClientConnect);
+      void ConnectToServer(const IPEndpoint& ep, const std::shared_ptr<TCPConnectCallback>& cb);
+      
       std::shared_ptr<UDPSocket> CreateUDPSocket();
       std::shared_ptr<UDPSocket> CreateUDPSocket(const IPEndpoint& ep);
       template<typename T>
@@ -297,8 +310,22 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	}
       };
       template<typename T>
+      class TCPCallbackFunction:public TCPConnectCallback {
+      public:
+	T func;
+	TCPCallbackFunction(const T& functor):func(functor) {
+	}
+	void Process(const std::shared_ptr<System::IO::Stream>& str, const IPEndpoint& ep) {
+	  func(str,ep);
+	}
+      };
+      template<typename T>
       std::shared_ptr<UDPCallback> F2UDPCB(const T& functor) {
 	return std::make_shared<UDPCallbackFunction<T>>(functor);
+      }
+      template<typename T>
+      std::shared_ptr<TCPConnectCallback> F2TCPCB(const T& functor) {
+	return std::make_shared<TCPCallbackFunction<T>>(functor);
       }
       
     }

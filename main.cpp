@@ -73,6 +73,29 @@ int main(int argc, char** argv) {
   ep.ip = "::1";
   s->Send("Hi world!",9,ep);
   
+  System::Net::IPEndpoint serverAddr;
+serverAddr.ip = "::";
+serverAddr.port = 0;
+char tcpbuffer[256];
+  memset(tcpbuffer,0,256);
+std::shared_ptr<System::Net::TCPServer> tcpServer = System::Net::CreateTCPServer(serverAddr,System::Net::F2TCPCB([&](const std::shared_ptr<System::IO::Stream>& clientStr, const System::Net::IPEndpoint& clientAddr){
+  char* tcp_ptr = tcpbuffer;
+  clientStr->Read(tcpbuffer,256,System::IO::IOCB([=](const System::IO::IOCallback& cb){
+    printf("From TCP client (%i bytes): %s\n",(int)cb.outlen,tcp_ptr);
+  }));
+}));
+tcpServer->GetLocalEndpoint(serverAddr);
+
+System::Net::ConnectToServer(serverAddr,System::Net::F2TCPCB([&](const std::shared_ptr<System::IO::Stream>& str, const System::Net::IPEndpoint& addr){
+  const char* mander = "Hi NSA!";
+  str->Write(mander,strlen(mander),System::IO::IOCB([=](const System::IO::IOCallback& cbinfo){
+    //Hold a reference to our stream (otherwise we could close before the message gets sent)
+    
+    std::shared_ptr<System::IO::Stream> sref = str;
+  }));
+}));
+
+  
   
   System::Enter();
   printf("Main thread exited\n");

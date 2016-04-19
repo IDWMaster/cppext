@@ -14,7 +14,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-
+#include <fcntl.h>
 
 namespace System {
   
@@ -230,6 +230,8 @@ namespace System {
       std::thread* thread;
       std::mutex mtx;
       std::map<int,std::shared_ptr<GenericIOCallback>> callbacks;
+      std::map<int,std::shared_ptr<GenericIOCallback>> writecallbacks;
+      std::map<int,std::shared_ptr<GenericIOCallback>> write_fail_callbacks;
       bool running;
       NetIOLoop() {
 	int pipes[2];
@@ -239,11 +241,15 @@ namespace System {
 	this->thread = new std::thread([=](){
 	  while(running) {
 	    fd_set fds;
+	    fd_set fd_write;
+	    fd_set fd_write_fail;
+	    FD_ZERO(&fd_write_fail);
+	    FD_ZERO(&fd_write);
 	    FD_ZERO(&fds);
 	    FD_SET(pipes[0],&fds);
 	    int highestfd = pipes[0];
 	    std::vector<int> fdlist;
-	    
+	    std::vector<int> fdlist_write;
 	    {
 	      std::unique_lock<std::mutex> l(mtx);
 	      fdlist.resize(callbacks.size());
@@ -256,8 +262,22 @@ namespace System {
 		fdlist[pos] = i->first;
 		pos++;
 	      }
+	      
+	      fdlist_write.resize(writecallbacks.size());
+	      pos = 0;
+	      if(writecallbacks.size()) {
+		for(auto i = writecallbacks.begin();i!= writecallbacks.end();i++) {
+		  FD_SET(i->first,&fd_write);
+		  FD_SET(i->first,&fd_write_fail);
+		  if(i->first>highestfd) {
+		    highestfd = i->first;
+		  }
+		  fdlist_write[pos] = i->first;
+		  pos++;
+		}
+	      }
 	    }
-	    int rval = select(highestfd+1,&fds,0,0,0);
+	    int rval = select(highestfd+1,&fds,&fd_write,0,0);
 	    if(rval == -1) {
 	      continue;
 	    }
@@ -268,6 +288,24 @@ namespace System {
 		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
 		iocb->loop->Push(iocb->event);
 		callbacks.erase(fdlist[i]);
+	      }
+	    }
+	    
+	    
+	    for(size_t i = 0;i<fdlist_write.size();i++) {
+	      if(FD_ISSET(fdlist_write[i],&fd_write_fail)) {
+		std::unique_lock<std::mutex> l(mtx);
+		std::shared_ptr<GenericIOCallback> iocb = write_fail_callbacks[fdlist_write[i]];
+		iocb->loop->Push(iocb->event);
+		write_fail_callbacks.erase(fdlist_write[i]);
+		writecallbacks.erase(fdlist_write[i]);
+	      }else {
+	      if(FD_ISSET(fdlist_write[i],&fd_write)) {
+		std::unique_lock<std::mutex> l(mtx);
+		std::shared_ptr<GenericIOCallback> iocb = writecallbacks[fdlist_write[i]];
+		iocb->loop->Push(iocb->event);
+		writecallbacks.erase(fdlist_write[i]);
+	      }
 	      }
 	    }
 	    if(FD_ISSET(pipes[0],&fds)) {
@@ -281,6 +319,13 @@ namespace System {
       void Ntfy() {
 	unsigned char izard;
 	write(ntfyfd,&izard,1);
+      }
+      void AddWriteFD(int fd, const std::shared_ptr<GenericIOCallback>& evt, const std::shared_ptr<GenericIOCallback>& failEvt) {
+	std::unique_lock<std::mutex> l(mtx);
+	writecallbacks[fd] = evt;
+	write_fail_callbacks[fd] = evt;
+	
+	Ntfy();
       }
       void AddFD(int fd, const std::shared_ptr<GenericIOCallback>& evt) {
 	std::unique_lock<std::mutex> l(mtx);
@@ -631,6 +676,78 @@ public:
     close(fd);
   }
 };
+
+class TCPServerImpl:public TCPServer {
+public:
+  int fd;
+  TCPServerImpl() {
+    fd = socket(PF_INET6,SOCK_STREAM,IPPROTO_TCP);
+    int flags = fcntl(fd,F_GETFL,0);
+    fcntl(fd,F_SETFL,flags | O_NONBLOCK);
+  }
+  void GetLocalEndpoint(IPEndpoint& out) {
+    sockaddr_in6 saddr;
+    memset(&saddr,0,sizeof(saddr));
+    saddr.sin6_family = AF_INET6;
+    socklen_t slen = sizeof(saddr);
+    getsockname(fd,(sockaddr*)&saddr,&slen);
+    out.port = ntohs(saddr.sin6_port);
+    
+    memcpy(out.ip.raw,&saddr.sin6_addr,16);
+  }
+~TCPServerImpl(){
+  close(fd);
+};
+};
+
+
+std::shared_ptr< TCPServer > CreateTCPServer(const IPEndpoint& ep, const std::shared_ptr< TCPConnectCallback >& onClientConnect)
+{
+  std::shared_ptr<TCPServerImpl> retval = std::make_shared<TCPServerImpl>();
+    sockaddr_in6 addr;
+  memset(&addr,0,sizeof(addr));
+  memcpy(&addr.sin6_addr,ep.ip.raw,16);
+  addr.sin6_port = htons(ep.port);
+  addr.sin6_family = AF_INET6;
+  bind(retval->fd,(sockaddr*)&addr,sizeof(addr));
+  listen(retval->fd,20);
+  
+  System::IO::netloop.AddFD(retval->fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    sockaddr_in6 clientAddr;
+    memset(&clientAddr,0,sizeof(clientAddr));
+    clientAddr.sin6_family = AF_INET6;
+    socklen_t addrlen = sizeof(clientAddr);
+    int clientfd = accept(retval->fd,(sockaddr*)&clientAddr,&addrlen);
+    System::Net::IPEndpoint ep;
+    memcpy(ep.ip.raw,&clientAddr.sin6_addr,16);
+    ep.port = ntohs(clientAddr.sin6_port);
+    
+    onClientConnect->Process(System::IO::FD2S(clientfd),ep);
+  })));
+  
+  return retval;
+}
+
+void ConnectToServer(const IPEndpoint& ep, const std::shared_ptr< TCPConnectCallback >& cb)
+{
+  int fd = socket(PF_INET6,SOCK_STREAM,IPPROTO_TCP);
+  int flags = fcntl(fd,F_GETFL,0);
+  fcntl(fd,F_SETFL,flags | O_NONBLOCK);
+    sockaddr_in6 addr;
+  memset(&addr,0,sizeof(addr));
+  memcpy(&addr.sin6_addr,ep.ip.raw,16);
+  addr.sin6_port = htons(ep.port);
+  addr.sin6_family = AF_INET6;
+  connect(fd,(sockaddr*)&addr,sizeof(addr));
+  System::IO::netloop.AddWriteFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    cb->Process(System::IO::FD2S(fd),ep);
+  })),std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    cb->Process(0,ep);
+  })));
+}
+
+
+
 
 std::shared_ptr< UDPSocket > CreateUDPSocket(const IPEndpoint& ep)
 {
