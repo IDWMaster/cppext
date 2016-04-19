@@ -740,6 +740,7 @@ void ConnectToServer(const IPEndpoint& ep, const std::shared_ptr< TCPConnectCall
   addr.sin6_family = AF_INET6;
   connect(fd,(sockaddr*)&addr,sizeof(addr));
   System::IO::netloop.AddWriteFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    fcntl(fd,F_SETFL,flags);
     cb->Process(System::IO::FD2S(fd),ep);
   })),std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
     cb->Process(0,ep);
