@@ -624,11 +624,17 @@ IPAddress::IPAddress(const char* str)
 {
   inet_pton(AF_INET6,str,raw);
 }
+
 IPAddress::IPAddress(const uint64_t* raw)
 {
   this->raw[0] = raw[0]; //Can't get much more efficient than this; although maybe SIMD would be faster.
   this->raw[1] = raw[1];
 }
+void IPAddress::ToString(char* out)
+{
+  inet_ntop(AF_INET6,raw,out,INET6_ADDRSTRLEN);
+}
+
 
 class InternalUDPSocket:public UDPSocket {
 public:

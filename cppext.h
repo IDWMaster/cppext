@@ -250,11 +250,13 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	  raw[1] = other.raw[1];
 	}
 	IPAddress(){};
+	void ToString(char* out);
       };
       class IPEndpoint {
       public:
 	IPAddress ip;
 	uint16_t port;
+	
 	bool operator<(const IPEndpoint& other) const {
 	  uint64_t cop[3];
 	  cop[0] = ip.raw[0];
