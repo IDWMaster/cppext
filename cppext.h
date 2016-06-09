@@ -250,7 +250,7 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	  raw[1] = other.raw[1];
 	}
 	IPAddress(){};
-	void ToString(char* out);
+	void ToString(char* out) const;
       };
       class IPEndpoint {
       public:

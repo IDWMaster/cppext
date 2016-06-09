@@ -630,7 +630,7 @@ IPAddress::IPAddress(const uint64_t* raw)
   this->raw[0] = raw[0]; //Can't get much more efficient than this; although maybe SIMD would be faster.
   this->raw[1] = raw[1];
 }
-void IPAddress::ToString(char* out)
+void IPAddress::ToString(char* out) const
 {
   inet_ntop(AF_INET6,raw,out,INET6_ADDRSTRLEN);
 }
