@@ -277,7 +277,9 @@ namespace System {
 		}
 	      }
 	    }
+	    printf("CPPEXT-DBG: select\n");
 	    int rval = select(highestfd+1,&fds,&fd_write,0,0);
+	    printf("CPPEXT-DBG: Select complete\n");
 	    if(rval == -1) {
 	      continue;
 	    }
