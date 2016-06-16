@@ -286,8 +286,9 @@ namespace System {
 	      if(FD_ISSET(fdlist[i],&fds)) {
 		std::unique_lock<std::mutex> l(mtx);
 		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
-		iocb->loop->Push(iocb->event);
 		callbacks.erase(fdlist[i]);
+		iocb->loop->Push(iocb->event);
+		
 	      }
 	    }
 	    
