@@ -289,6 +289,7 @@ namespace System {
 		std::unique_lock<std::mutex> l(mtx);
 		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
 		callbacks.erase(fdlist[i]);
+		printf("CPPEXT-DBG: Invoke IO completion routine.\n");
 		iocb->loop->Push(iocb->event);
 		
 	      }
