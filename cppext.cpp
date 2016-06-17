@@ -95,6 +95,7 @@ namespace System {
      * @summary Enters the event loop. The calling thread will become the owner of this event loop.
      * */
     void Enter() {
+      velociraptor:
       running = true;
       while(running && refcount) {
 	std::mutex mtx;
@@ -114,7 +115,9 @@ namespace System {
 	  
 	  delete[] evts;
 	}
-	
+	if(pendingEvents.size()) {
+	  goto velociraptor;
+	}
 	if(running && refcount) {
 	  //Check for timers
 	  if(timers.size()) {
