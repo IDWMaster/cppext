@@ -80,8 +80,9 @@ namespace System {
     void Push(const std::shared_ptr<Event>& evt) {
       std::unique_lock<std::mutex> l(pendingEvents_mutex);
       pendingEvents.push(evt);
-      l.unlock();
+      
       this->evt.notify_one();
+      l.unlock();
     }
     bool running;
     /**
@@ -290,6 +291,7 @@ namespace System {
 		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
 		callbacks.erase(fdlist[i]);
 		printf("CPPEXT-DBG: Invoke IO completion routine.\n");
+		//TODO: IO completion callback not always being invoked
 		iocb->loop->Push(iocb->event);
 		
 	      }
