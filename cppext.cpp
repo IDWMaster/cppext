@@ -281,9 +281,7 @@ namespace System {
 		}
 	      }
 	    }
-	    printf("CPPEXT-DBG: select %i readFDs\n",(int)fdlist.size());
 	    int rval = select(highestfd+1,&fds,&fd_write,0,0);
-	    printf("CPPEXT-DBG: Select complete\n");
 	    if(rval == -1) {
 	      continue;
 	    }
@@ -293,7 +291,6 @@ namespace System {
 		std::unique_lock<std::mutex> l(mtx);
 		std::shared_ptr<GenericIOCallback> iocb = callbacks[fdlist[i]];
 		callbacks.erase(fdlist[i]);
-		printf("CPPEXT-DBG: Invoke IO completion routine.\n");
 		//TODO: IO completion callback not always being invoked
 		iocb->loop->Push(iocb->event);
 		
@@ -663,7 +660,6 @@ public:
    void Receive(void* buffer, size_t size, const std::shared_ptr< UDPCallback >& _cb) {
      runtime.loop->AddRef();
      System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
-       printf("CPPEXT-DBG: Got UDP?\n");
        std::shared_ptr<UDPCallback> cb = _cb;
        sockaddr_in6 saddr;
       memset(&saddr,0,sizeof(saddr));
