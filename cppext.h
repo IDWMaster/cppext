@@ -282,6 +282,7 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	virtual void GetLocalEndpoint(IPEndpoint& out) = 0;
 	virtual void Send(const void* buffer, size_t size, const IPEndpoint& ep) = 0;
 	virtual void Receive(void* buffer, size_t size, const std::shared_ptr<UDPCallback>& cb) = 0;
+	virtual void JoinMulticastGroup(const IPAddress& group) = 0;
 	virtual ~UDPSocket(){};
       };
       

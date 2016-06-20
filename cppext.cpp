@@ -674,6 +674,13 @@ public:
        runtime.loop->RemoveRef();
     })));
    }
+   void JoinMulticastGroup(const IPAddress& group) {
+     ipv6_mreq req;
+     req.ipv6mr_interface = 0;
+     memcpy(&req.ipv6mr_multiaddr,group.raw,16);
+     setsockopt(fd,IPPROTO_IPV6,IPV6_ADD_MEMBERSHIP,&req,sizeof(req));
+     
+   }
   void GetLocalEndpoint(IPEndpoint& out) {
     sockaddr_in6 saddr;
     memset(&saddr,0,sizeof(saddr));
