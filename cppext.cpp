@@ -15,6 +15,9 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/un.h>
+
+
 
 namespace System {
   
@@ -720,6 +723,8 @@ public:
 };
 
 
+
+
 std::shared_ptr< TCPServer > CreateTCPServer(const IPEndpoint& ep, const std::shared_ptr< TCPConnectCallback >& onClientConnect)
 {
   std::shared_ptr<TCPServerImpl> retval = std::make_shared<TCPServerImpl>();
@@ -745,6 +750,56 @@ std::shared_ptr< TCPServer > CreateTCPServer(const IPEndpoint& ep, const std::sh
   })));
   
   return retval;
+}
+
+class IPCServerImpl:public IPCServer {
+public:
+  int s;
+  IPCServerImpl(int socket) {
+    s = socket;
+  }
+~IPCServerImpl() {
+  close(s);
+}
+};
+
+
+
+std::shared_ptr< IPCServer > CreateIPCServer(const char* name, const std::shared_ptr< IPCConnectCallback >& onProcessConnect)
+{
+  sockaddr_un addr;
+  addr.sun_family = AF_UNIX;
+  strcpy(addr.sun_path,name);
+  int s = socket(AF_UNIX,SOCK_DGRAM,0);
+  bind(s,(sockaddr*)&addr,sizeof(addr));
+  listen(s,20);
+  std::shared_ptr<IPCServer> server = std::make_shared<IPCServerImpl>(s);
+  System::IO::netloop.AddFD(s,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    int clientFD = accept(s,0,0);
+    if(clientFD>0) {
+      onProcessConnect->Process(System::IO::FD2S(clientFD));
+    }
+  })));
+  return server;
+}
+
+
+void ConnectToServer(const char* path, const std::shared_ptr< IPCConnectCallback >& cb)
+{
+   int fd = socket(PF_INET6,SOCK_STREAM,IPPROTO_TCP);
+  int flags = fcntl(fd,F_GETFL,0);
+  fcntl(fd,F_SETFL,flags | O_NONBLOCK);
+  sockaddr_un addr;
+  addr.sun_family = AF_UNIX;
+  strcpy(addr.sun_path,path);
+  
+  connect(fd,(sockaddr*)&addr,sizeof(addr));
+  System::IO::netloop.AddWriteFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    fcntl(fd,F_SETFL,flags);
+    cb->Process(System::IO::FD2S(fd));
+  })),std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+    cb->Process(0);
+  })));
 }
 
 void ConnectToServer(const IPEndpoint& ep, const std::shared_ptr< TCPConnectCallback >& cb)

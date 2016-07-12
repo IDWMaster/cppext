@@ -291,14 +291,39 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	virtual void GetLocalEndpoint(IPEndpoint& out) = 0;
 	virtual ~TCPServer(){};
       };
+      class IPCServer {
+      public:
+	virtual ~IPCServer(){};
+      };
+      class IPCConnectCallback {
+      public:
+	virtual void Process(const std::shared_ptr<System::IO::Stream>& str) = 0;
+	virtual ~IPCConnectCallback(){}
+      };
+      /**
+       * @summary Creates an IPC server used for communication with processes on the local computer
+       * @param name The path on the filesystem to create the IPC channel at.
+       * @param onProcessConnect A callback which is invoked when a process connects to this IPC channel
+       * */
+      std::shared_ptr<IPCServer> CreateIPCServer(const char* name, const std::shared_ptr<IPCConnectCallback>& onProcessConnect);
       class TCPConnectCallback {
       public:
 	virtual void Process(const std::shared_ptr<System::IO::Stream>& str, const IPEndpoint& ep) = 0;
 	virtual ~TCPConnectCallback(){};
       };
+      template<typename T>
+      class IPCConnectCallbackFunction:public IPCConnectCallback {
+      public:
+	T functor;
+	IPCConnectCallbackFunction(const T& func):functor(func) {
+	}
+	void Process(const std::shared_ptr< IO::Stream >& str) {
+	  functor(str);
+	}
+      };
       std::shared_ptr<TCPServer> CreateTCPServer(const IPEndpoint& ep, const std::shared_ptr<TCPConnectCallback>& onClientConnect);
       void ConnectToServer(const IPEndpoint& ep, const std::shared_ptr<TCPConnectCallback>& cb);
-      
+      void ConnectToServer(const char* path, const std::shared_ptr<IPCConnectCallback>& cb);
       std::shared_ptr<UDPSocket> CreateUDPSocket();
       std::shared_ptr<UDPSocket> CreateUDPSocket(const IPEndpoint& ep);
       template<typename T>
@@ -330,7 +355,10 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
       std::shared_ptr<TCPConnectCallback> F2TCPCB(const T& functor) {
 	return std::make_shared<TCPCallbackFunction<T>>(functor);
       }
-      
+      template<typename T>
+      std::shared_ptr<IPCConnectCallback> F2IPCCB(const T& functor) {
+	return std::make_shared<IPCConnectCallbackFunction<T>>(functor);
+      }
     }
 }
 
