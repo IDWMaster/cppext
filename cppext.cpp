@@ -612,6 +612,10 @@ class MessageQueueInternal:public MessageQueue {
 public:
   std::shared_ptr<MessageEvent> listener;
   std::shared_ptr<EventLoop> boundloop;
+  ~MessageQueueInternal() {
+      boundloop->RemoveRef();
+  }
+
   void Post(const std::shared_ptr<Message>& msg) {
     std::shared_ptr<InternalMessageEvent> evt = std::make_shared<InternalMessageEvent>();
     evt->evt = listener;
@@ -625,6 +629,7 @@ std::shared_ptr< MessageQueue > Internal::MakeQueue(const std::shared_ptr< Messa
   std::shared_ptr<MessageQueueInternal> retval = std::make_shared<MessageQueueInternal>();
   retval->listener = evt;
   retval->boundloop = runtime.loop;
+  retval->boundloop->AddRef();
   return retval;
 }
 
