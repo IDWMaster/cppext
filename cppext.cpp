@@ -7,7 +7,6 @@
 #include <atomic>
 #include <thread>
 #include <unistd.h>
-#include <aio.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -354,162 +353,12 @@ namespace System {
     static NetIOLoop netloop;
     
     
-    /**
-     * Represents a backround I/O thread
-     * */
-    class IOLoop {
-    public:
-      std::thread* thread;
-      bool running;
-      int ntfyfd;
-      std::map<struct aiocb*,std::shared_ptr<IOReadyCallback>> callbacks;
-      std::mutex mtx;
-      IOLoop() {
-	int pfds[2]; //read,write ends
-	pipe(pfds);
-	ntfyfd = pfds[1];
-	running = true;
-	int fd = pfds[0];
-	thread = new std::thread([=](){
-	  struct aiocb* current = 0;
-	  while(running) {
-	    struct aiocb** cblist;
-	    size_t csz;
-	    {
-	      std::unique_lock<std::mutex> l(mtx);
-	      
-	      csz = callbacks.size()+1;
-	      cblist = new struct aiocb*[csz];
-	      if(current == 0) {
-	      cblist[0] = new struct aiocb();
-	      memset(cblist[0],0,sizeof(cblist[0]));
-	      unsigned char mander;
-	      cblist[0]->aio_buf = &mander;
-	      cblist[0]->aio_nbytes = 1;
-	      cblist[0]->aio_fildes = fd;
-	      aio_read(cblist[0]);
-	      current = cblist[0];
-	      }else {
-		cblist[0] = current;
-	      }
-	      
-	      timespec timeout;
-	      timeout.tv_sec = -1;
-	      size_t cpos = 1;
-	      for(auto i = callbacks.begin();i!= callbacks.end();i++) {
-		cblist[cpos] = i->first;
-		cpos++;
-	      }
-	    }
-	    aio_suspend(cblist,csz,0);
-	    
-	      if(aio_error(cblist[0]) != EINPROGRESS) {
-		current = 0;
-	      }
-	    for(size_t i = 1;i<csz;i++) {
-	      if(aio_error(cblist[i]) != EINPROGRESS) {
-		//IO completion
-		std::unique_lock<std::mutex> l(mtx); //It's a VERY unique lock!
-		std::shared_ptr<IOReadyCallback> cb = callbacks[cblist[i]];
-		callbacks.erase(cblist[i]);
-		ssize_t rval = aio_return(cblist[i]);
-		if(rval == -1) {
-		  cb->event->error = true;
-		}else {
-		  cb->event->outlen = (size_t)rval;
-		}
-		delete cblist[i];
-		cb->loop->Push(cb->event);
-		
-	      }
-	    }
-	    
-	      delete[] cblist;
-	  }
-	  close(fd);
-	});
-      }
-      void Ntfy() {
-	unsigned char mander;
-	write(ntfyfd,&mander,1);
-      }
-      void AddFd(struct aiocb* fd, const std::shared_ptr<System::EventLoop>& loop, const std::shared_ptr<System::IO::IOCallback>& event) {
-	    std::unique_lock<std::mutex> l(mtx);
-	    std::shared_ptr<IOReadyCallback> cb = std::make_shared<IOReadyCallback>(loop,event);
-	    callbacks[fd] = cb;
-	    Ntfy();
-      }
-      ~IOLoop() {
-	running = false;
-	Ntfy();
-	thread->join();
-	close(ntfyfd);
-      }
-    };
+    //Asynchronous I/O is not supported on Android for file descriptors.
     
     
     
     
-    /**
-     * Represents a Stream corresponding to a file descriptor
-     * */
-    class FileStream:public Stream, public std::enable_shared_from_this<FileStream> {
-    public:
-      std::shared_ptr<IOLoop> iol;
-      std::shared_ptr<System::EventLoop> evl;
-      int fd;
-      uint64_t offset;
-      /**
-       * @summary Creates a new FileStream
-       * @param fd The file descriptor -- must be opened in non-blocking mode.
-       * */
-      FileStream(int fd,  const std::shared_ptr<IOLoop>& loop, const std::shared_ptr<System::EventLoop>& evloop) {
-	iol = loop;
-	this->fd = fd;
-	this->offset = 0;
-	evl = evloop;
-	
-      }
-      void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
-	struct aiocb* req = new struct aiocb();
-	memset(req,0,sizeof(*req));
-	req->aio_buf = (void*)buffer;
-	req->aio_fildes = fd;
-	req->aio_nbytes = len;
-	req->aio_offset = offset;
-	std::shared_ptr<FileStream> thisptr = shared_from_this();
-	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
-	  if(!cb.error) {
-	    thisptr->offset+=cb.outlen;
-	  }
-	  callback->error = cb.error;
-	  callback->outlen = cb.outlen;
-	  callback->Process();
-	}));
-	
-	aio_write(req);
-      }
-      void Read(void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) {
-	struct aiocb* req = new struct aiocb();
-	memset(req,0,sizeof(*req));
-	req->aio_buf = (void*)buffer;
-	req->aio_fildes = fd;
-	req->aio_nbytes = len;
-	req->aio_offset = offset;
-	std::shared_ptr<FileStream> thisptr = shared_from_this();
-	iol->AddFd(req,evl,IOCB([=](const IOCallback& cb){
-	  if(!cb.error) {
-	    thisptr->offset+=cb.outlen;
-	  }
-	  callback->error = cb.error;
-	  callback->outlen = cb.outlen;
-	  callback->Process();
-	}));
-	
-	aio_read(req);
-      }
-    };
-    
+
 
 void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
 {
@@ -531,17 +380,14 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
 }
 
   }
-  
-  static std::shared_ptr<IO::IOLoop> giol;
+
   
   class Runtime {
   public:
    std::shared_ptr<EventLoop> loop;
-    std::shared_ptr<IO::IOLoop> iol;
     Runtime() {
       
       loop = std::make_shared<EventLoop>();
-      iol = giol;
       
     }
     ~Runtime() {
@@ -552,8 +398,7 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
   class Initializer {
   public:
     Initializer() {
-    
-	giol = std::make_shared<IO::IOLoop>();
+
       std::thread mtr([=](){}); //Fix for pthreads issue
       mtr.join();
       
@@ -561,11 +406,6 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
   };
   static Initializer lib_init;
 
-std::shared_ptr< IO::Stream > IO::FD2S(int fd)
-{
-
-  return std::make_shared<FileStream>(fd,runtime.iol,runtime.loop);
-}
 
  
    
@@ -704,6 +544,50 @@ public:
   }
 };
 
+
+    class TCPStream:public System::IO::Stream, public std::enable_shared_from_this<TCPStream> {
+    public:
+        int fd;
+        TCPStream(int fd) {
+            this->fd = fd;
+        }
+        /**
+       * @summary Asynchronously reads from a stream
+       * @param buffer The buffer to store the data in
+       * @param len The size of the buffer (max amount of data to be read)
+       * @param callback The callback function to invoke when the operation completes
+       * */
+        void Read(void* buffer, size_t len, const std::shared_ptr<System::IO::IOCallback>& callback) {
+            runtime.loop->AddRef();
+            System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+                std::shared_ptr<System::IO::IOCallback> cb = callback;
+                int bytes = read(fd,buffer,len);
+                cb->error = bytes<0;
+                cb->outlen = bytes;
+                cb->Process();
+                runtime.loop->RemoveRef();
+            })));
+        }
+        /**
+         * @summary Adds a new buffer into the ordered write queue for this stream
+         * @param buffer The buffer to write to the stream
+         * @param len The length of the buffer to write
+         * @param callback A callback to invoke when the write operation completes
+         * */
+        void Write(const void* buffer, size_t len, const std::shared_ptr<System::IO::IOCallback>& callback) {
+            runtime.loop->AddRef();
+            std::shared_ptr<TCPStream> thisptr = shared_from_this();
+            System::IO::netloop.AddFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
+                std::shared_ptr<System::IO::IOCallback> cb = callback;
+                int bytes = write(fd,buffer,len);
+                cb->error = bytes<0;
+                cb->outlen = bytes;
+                cb->Process();
+                runtime.loop->RemoveRef();
+            })));
+        }
+    };
+
 class TCPServerImpl:public TCPServer {
 public:
   int fd;
@@ -751,7 +635,7 @@ std::shared_ptr< TCPServer > CreateTCPServer(const IPEndpoint& ep, const std::sh
     memcpy(ep.ip.raw,&clientAddr.sin6_addr,16);
     ep.port = ntohs(clientAddr.sin6_port);
     
-    onClientConnect->Process(System::IO::FD2S(clientfd),ep);
+    onClientConnect->Process(std::make_shared<TCPStream>(clientfd),ep);
   })));
   
   return retval;
@@ -782,7 +666,7 @@ std::shared_ptr< IPCServer > CreateIPCServer(const char* name, const std::shared
   System::IO::netloop.AddFD(s,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
     int clientFD = accept(s,0,0);
     if(clientFD>0) {
-      onProcessConnect->Process(System::IO::FD2S(clientFD));
+      onProcessConnect->Process(std::make_shared<TCPStream>(clientFD));
     }
   })));
   return server;
@@ -801,7 +685,7 @@ void ConnectToServer(const char* path, const std::shared_ptr< IPCConnectCallback
   connect(fd,(sockaddr*)&addr,sizeof(addr));
   System::IO::netloop.AddWriteFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
     fcntl(fd,F_SETFL,flags);
-    cb->Process(System::IO::FD2S(fd));
+    cb->Process(std::make_shared<TCPStream>(fd));
   })),std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
     cb->Process(0);
   })));
@@ -820,7 +704,7 @@ void ConnectToServer(const IPEndpoint& ep, const std::shared_ptr< TCPConnectCall
   connect(fd,(sockaddr*)&addr,sizeof(addr));
   System::IO::netloop.AddWriteFD(fd,std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
     fcntl(fd,F_SETFL,flags);
-    cb->Process(System::IO::FD2S(fd),ep);
+    cb->Process(std::make_shared<TCPStream>(fd),ep);
   })),std::make_shared<System::IO::GenericIOCallback>(runtime.loop,F2E([=](){
     cb->Process(0,ep);
   })));

@@ -193,10 +193,7 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
       virtual void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
       virtual void Pipe(const std::shared_ptr<Stream>& output, size_t bufflen = 4096);
     };
-    /**
-     * @summary Converts a platform-specific file descriptor to a Stream
-     * */
-    std::shared_ptr<Stream> FD2S(int fd);
+
     
     
     
