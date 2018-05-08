@@ -557,7 +557,6 @@ namespace System {
         }else {
             //Dispatch
             size_t writelen = info.outlen;
-            runtime.loop->Push(F2E([=](){
                 output->Write(buffer,writelen,IOCB([=](const IOCallback& writeinfo){
                     if(writeinfo.error) {
                         delete[] buffer;
@@ -566,7 +565,6 @@ namespace System {
                         Read(buffer,bufflen,*cb);
                     }
                 }));
-            }));
         }
       });
       Read(buffer,bufflen,*cb);
