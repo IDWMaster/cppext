@@ -4,7 +4,8 @@
 #include <memory>
 #include <chrono>
 #include <string.h>
-
+#include <queue>
+#include <mutex>
 
 
 namespace System {
@@ -193,6 +194,11 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
       virtual void Write(const void* buffer, size_t len, const std::shared_ptr<IOCallback>& callback) = 0;
       virtual void Pipe(const std::shared_ptr<Stream>& output, size_t bufflen = 4096);
     };
+
+
+
+
+
     /**
      * @summary Converts a platform-specific file descriptor to a Stream
      * */
@@ -364,6 +370,124 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 	return std::make_shared<IPCConnectCallbackFunction<T>>(functor);
       }
     }
+
+
+    class Packet {
+    public:
+        unsigned char* data;
+        size_t len;
+        size_t offset;
+        Packet(unsigned char* data, size_t len) {
+            this->data = data;
+            this->len = len;
+            offset = 0;
+        }
+    };
+
+
+    class DispatchMessage:public System::Message {
+    public:
+        std::shared_ptr<System::Event> cb;
+        DispatchMessage(const std::shared_ptr<System::Event>& cb):cb(cb){
+
+        }
+    };
+
+
+
+
+    /**
+     * A PushStream is a thread-safe stream capable of dispatching binary data directly into a System::Stream object. This stream is read-only.
+     * @brief The PushStream class
+     */
+    class PushStream:public System::IO::Stream {
+    public:
+        std::queue<Packet> packets;
+        std::shared_ptr<System::IO::IOCallback> cb;
+        unsigned char* buffy;
+        size_t len;
+        std::shared_ptr<System::MessageQueue> q;
+        PushStream() {
+            q = System::MakeQueue([=](const std::shared_ptr<System::Message>& msg){
+                ((DispatchMessage*)msg.get())->cb->Process();
+            });
+        }
+        ~PushStream() {
+            while(packets.size()) {
+                Packet packet = packets.front();
+                packets.pop();
+                delete[] packet.data;
+            }
+        }
+std::mutex mtx;
+        /**
+         * @brief Push Pushes data into the stream. This method is thread-safe.
+         * @param buffy The buffer to push into the stream (owned by the caller)
+         * @param len The length of data to push into the stream.
+         */
+        void Push(const void* __buffy, size_t len) {
+            unsigned char* buffy = 0;
+
+            if(__buffy) {
+                std::unique_lock<std::mutex> l(mtx);
+                buffy =new unsigned char[len];
+                memcpy(buffy,__buffy,len);
+                packets.push(Packet(buffy,len));
+            }
+            q->Post(std::make_shared<DispatchMessage>(F2E([=](){
+                    std::unique_lock<std::mutex> l(mtx);
+
+                    if(this->cb) {
+                        std::shared_ptr<System::IO::IOCallback> cb = this->cb;
+                        this->cb = 0;
+                        size_t totalRead = 0;
+                        while(packets.size() && this->len) {
+                            Packet packet = packets.front();
+                            size_t avail = packet.len;
+                            if(avail>this->len) {
+                                avail = this->len;
+                            }
+                            memcpy(this->buffy,packet.data+packet.offset,avail);
+                            packet.offset+=avail;
+                            totalRead+=avail;
+                            this->buffy+=avail;
+                            packet.len-=avail;
+                            this->len-=avail;
+                            if(!packet.len) {
+                                delete[] packet.data;
+                                packets.pop();
+                            }
+                        }
+                        cb->error = false;
+                        cb->outlen = totalRead;
+                        if(totalRead) {
+                            cb->Process();
+                        }
+                    }
+                      delete[] buffy;
+            })));
+
+        }
+
+        void Read(void* buffy, size_t len, const std::shared_ptr<System::IO::IOCallback>& cb) {
+            if(this->cb) {
+                throw "Overlapped error";
+            }
+            this->cb = cb;
+            this->len = len;
+            this->buffy = (unsigned char*)buffy;
+            if(len && packets.size()) {
+                Push(0,0);
+            }
+        }
+        void Write(const void* buffy, size_t len, const std::shared_ptr<System::IO::IOCallback>& cb) {
+            //Operation not supported
+            cb->outlen = 0;
+            cb->error = true;
+            cb->Process();
+        }
+    };
+
 }
 
 #endif

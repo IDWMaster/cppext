@@ -549,11 +549,13 @@ namespace System {
   {
       unsigned char* buffer = new unsigned char[bufflen];
       std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
+      runtime.loop->AddRef();
       *cb = IOCB([=](const IOCallback& info){
         if(info.outlen == 0) {
           //End of stream, close pipe
           delete[] buffer;
           delete cb;
+            runtime.loop->RemoveRef();
         }else {
             //Dispatch
             size_t writelen = info.outlen;
@@ -561,6 +563,7 @@ namespace System {
                     if(writeinfo.error) {
                         delete[] buffer;
                         delete cb;
+                        runtime.loop->RemoveRef();
                     }else {
                         Read(buffer,bufflen,*cb);
                     }
@@ -721,6 +724,7 @@ public:
     fd = socket(PF_INET6,SOCK_STREAM,IPPROTO_TCP);
     int flags = fcntl(fd,F_GETFL,0);
     fcntl(fd,F_SETFL,flags | O_NONBLOCK);
+    runtime.loop->AddRef();
   }
   void GetLocalEndpoint(IPEndpoint& out) {
     sockaddr_in6 saddr;
@@ -734,6 +738,7 @@ public:
   }
 ~TCPServerImpl(){
   close(fd);
+  runtime.loop->RemoveRef();
 };
 };
 
