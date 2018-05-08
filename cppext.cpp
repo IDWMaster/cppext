@@ -511,24 +511,6 @@ namespace System {
     };
     
 
-void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
-{
-  int pfds[2];
-	pipe(pfds);
-	unsigned char* buffer = new unsigned char[bufflen];
-	std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
-	*cb = IOCB([&](const IOCallback& info){
-	  if(info.outlen == 0) {
-	    //End of stream, close pipe
-	    delete[] buffer;
-	    delete cb;
-	  }else {
-	    Write(buffer,info.outlen,IOCB([=](const IOCallback& info){
-		Read(buffer,bufflen,*cb);
-	    }));
-	  }
-	});
-}
 
   }
   
@@ -560,6 +542,36 @@ void Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
     }
   };
   static Initializer lib_init;
+
+
+
+  void IO::Stream::Pipe(const std::shared_ptr< Stream >& output, size_t bufflen)
+  {
+      unsigned char* buffer = new unsigned char[bufflen];
+      std::shared_ptr<IOCallback>* cb = new std::shared_ptr<IOCallback>();
+      *cb = IOCB([=](const IOCallback& info){
+        if(info.outlen == 0) {
+          //End of stream, close pipe
+          delete[] buffer;
+          delete cb;
+        }else {
+            //Dispatch
+            size_t writelen = info.outlen;
+            runtime.loop->Push(F2E([=](){
+                output->Write(buffer,writelen,IOCB([=](const IOCallback& writeinfo){
+                    if(writeinfo.error) {
+                        delete[] buffer;
+                        delete cb;
+                    }else {
+                        Read(buffer,bufflen,*cb);
+                    }
+                }));
+            }));
+        }
+      });
+      Read(buffer,bufflen,*cb);
+  }
+
 
 std::shared_ptr< IO::Stream > IO::FD2S(int fd)
 {
