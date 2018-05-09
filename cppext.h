@@ -397,7 +397,7 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
 
 
     /**
-     * A PushStream is a thread-safe stream capable of dispatching binary data directly into a System::Stream object. This stream is read-only.
+     * UNSTABLE/Experimental -- Do not use: A PushStream is a thread-safe stream capable of dispatching binary data directly into a System::Stream object. This stream is read-only.
      * @brief The PushStream class
      */
     class PushStream:public System::IO::Stream {
@@ -420,6 +420,7 @@ static void* C(const F& callback, R(*&fptr)(void*, args...)) {
             }
         }
 std::mutex mtx;
+bool pushing;
         /**
          * @brief Push Pushes data into the stream. This method is thread-safe.
          * @param buffy The buffer to push into the stream (owned by the caller)
@@ -428,8 +429,8 @@ std::mutex mtx;
         void Push(const void* __buffy, size_t len) {
             unsigned char* buffy = 0;
 
+            std::unique_lock<std::mutex> l(mtx);
             if(__buffy) {
-                std::unique_lock<std::mutex> l(mtx);
                 buffy =new unsigned char[len];
                 memcpy(buffy,__buffy,len);
                 packets.push(Packet(buffy,len));
@@ -464,7 +465,6 @@ std::mutex mtx;
                             cb->Process();
                         }
                     }
-                      delete[] buffy;
             })));
 
         }
